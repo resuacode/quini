@@ -2,16 +2,20 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --color-marca: #0f766e;
-  --color-marca-claro: #ccfbf1;
+  /* Rojo quiniela */
+  --color-marca: #d0021b;
+  --color-marca-oscuro: #a80016;
+  --color-marca-claro: #fde8ea;
+  /* Papel del boleto */
+  --color-papel: #fbf8f5;
   /* Un color por jugador (orden de registro) */
-  --color-j1: #0284c7;
+  --color-j1: #1d4ed8;
   --color-j2: #d97706;
 }
 
 @layer base {
   body {
-    @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
+    @apply bg-papel text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
   }
   button:not(:disabled) {
     cursor: pointer;
@@ -23,7 +27,7 @@
     @apply rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900;
   }
   .boton {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-marca px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-marca px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-marca-oscuro disabled:opacity-50;
   }
   .boton-sec {
     @apply inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800;

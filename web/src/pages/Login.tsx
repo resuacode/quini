@@ -43,7 +43,7 @@ export default function Login() {
     <div className="flex min-h-dvh items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-3 inline-flex rounded-2xl bg-marca px-3 py-2 text-xl font-black text-white">1X2</div>
+          <div className="mx-auto mb-3 inline-flex rounded-2xl bg-marca px-3 py-2 text-xl font-black text-white shadow-md">1X2</div>
           <h1 className="text-2xl font-black tracking-tight">Quini</h1>
           <p className="text-sm text-slate-500">El duelo de aciertos de la quiniela</p>
         </div>

@@ -107,7 +107,7 @@ export default function Apostar() {
 
       {p15 && (
         <div className="tarjeta space-y-3 p-4">
-          <p className="text-xs font-semibold tracking-wide text-amber-600 uppercase">Pleno al 15</p>
+          <p className="text-xs font-semibold tracking-wide text-marca uppercase">Pleno al 15</p>
           {[
             { equipo: p15.local, valor: plenoL, set: setPlenoL },
             { equipo: p15.visitante, valor: plenoV, set: setPlenoV },

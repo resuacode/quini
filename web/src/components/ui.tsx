@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { EstadoJornada, Jornada } from "../lib/types";
 
-export const COLOR_JUGADOR = ["var(--color-j1)", "var(--color-j2)", "#7c3aed", "#db2777"];
+export const COLOR_JUGADOR = ["var(--color-j1)", "var(--color-j2)", "#059669", "#7c3aed"];
 
 export function colorJugador(i: number) {
   return COLOR_JUGADOR[i % COLOR_JUGADOR.length];

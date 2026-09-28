@@ -172,7 +172,7 @@ function FilaPartido({ partido: p, apuestas }: { partido: Partido; apuestas: (Ap
   const res = resultadoActual(p);
 
   return (
-    <tr className={`border-t border-slate-100 dark:border-slate-800 ${p.posicion === 15 ? "bg-amber-50/60 dark:bg-amber-950/20" : ""}`}>
+    <tr className={`border-t border-slate-100 dark:border-slate-800 ${p.posicion === 15 ? "bg-marca-claro/50 dark:bg-red-950/20" : ""}`}>
       <td className="py-2 pl-3 text-[11px] font-semibold text-slate-400">{p.posicion === 15 ? "P15" : p.posicion}</td>
       <td className="py-2 pr-2">
         <div className="flex items-center gap-2">
