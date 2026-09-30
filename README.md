@@ -13,7 +13,7 @@ Todo funciona con planes gratuitos: **Supabase** (base de datos, auth, realtime,
 
 | Qué | De dónde sale |
 | --- | --- |
-| Los 15 partidos de la jornada | Se pegan en **Gestión**, copiados de cualquier sitio (p. ej. loteriasyapuestas.es). El formulario reconoce número de jornada, número de partido, fecha, hora y marcas `(m)`/`(f)`, y enseña una vista previa. |
+| Los 15 partidos de la jornada | Con el marcador **Importar a Quini**: pulsado en loteriasyapuestas.es, tu navegador lee la próxima jornada de la propia web de SELAE y abre Quini con el formulario relleno. También se pueden pegar a mano: el formulario reconoce número de jornada, número de partido, fecha, hora y marcas `(m)`/`(f)`, y enseña una vista previa. |
 | Marcadores en directo | [API-Football](https://www.api-football.com/) (plan gratis, 100 peticiones/día). Los partidos se enlazan por hora de inicio y nombre de los equipos, así que valen también Segunda, selecciones o Liga F. |
 | Cierre de la jornada | Automático cuando API-Football da los 15 partidos por terminados. |
 | Resultado oficial (aplazados, partidos sin enlazar) | [loteriasapi.com](https://loteriasapi.com), consultado pocas veces por jornada. Como intento extra se prueba SELAE, aunque bloquea las peticiones desde Supabase. |
@@ -90,10 +90,11 @@ supabase/tests/           tests SQL (pgTAP)
 
 ## Uso
 
-1. En **Gestión → Nueva jornada**, pega los 15 partidos, revisa la vista previa y pulsa *Crear jornada*. Se enlazan solos con API-Football. Si alguno no se enlaza, puedes poner su *fixture* a mano o meter el resultado directamente.
-2. Cada uno entra en **Jornada → Hacer mi apuesta**.
-3. Durante la jornada, la página se actualiza sola. Los aciertos aparecen en verde claro mientras son provisionales y en verde sólido cuando el partido termina.
-4. Cuando acaban los 15 partidos, la jornada se cierra y suma en **Temporada**. Después se contrasta con el resultado oficial; puedes forzarlo con *Traer resultado oficial* o corregir cualquier dato en Gestión.
+1. La primera vez, instala el marcador desde **Gestión → Importar la jornada con un clic**. En el ordenador se arrastra a la barra de marcadores; en el móvil se copia su código como URL de un marcador. Instálalo desde la web publicada, porque el marcador abre la misma dirección desde la que lo copiaste.
+2. Cada semana, abre loteriasyapuestas.es y pulsa **Importar a Quini** (o pega los partidos a mano en **Gestión → Nueva jornada**). Revisa la vista previa y pulsa *Crear jornada*. Se enlazan solos con API-Football. Si alguno no se enlaza, puedes poner su *fixture* a mano o meter el resultado directamente.
+3. Cada uno entra en **Jornada → Hacer mi apuesta**.
+4. Durante la jornada, la página se actualiza sola. Los aciertos aparecen en verde claro mientras son provisionales y en verde sólido cuando el partido termina.
+5. Cuando acaban los 15 partidos, la jornada se cierra y suma en **Temporada**. Después se contrasta con el resultado oficial; puedes forzarlo con *Traer resultado oficial* o corregir cualquier dato en Gestión.
 
 ## Desarrollo local
 
