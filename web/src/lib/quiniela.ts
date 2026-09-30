@@ -92,13 +92,110 @@ export function enJuego(p: Partido): boolean {
 }
 
 /** Convierte "Local - Visitante" por línea en pares. Admite "-", "–", " vs ". */
-export function parsearPartidos(texto: string): { local: string; visitante: string }[] {
-  return texto
-    .split("\n")
-    .map((l) => l.replace(/^\s*\d+\s*[.)-]?\s+/, "").trim())
-    .filter(Boolean)
-    .map((l) => {
-      const [local, visitante] = l.split(/\s+(?:-|–|vs\.?)\s+|\s*[-–]\s*/i);
-      return { local: (local ?? "").trim(), visitante: (visitante ?? "").trim() };
-    });
+export interface PartidoPegado {
+  local: string;
+  visitante: string;
+  /** ISO UTC, o null si no venía hora */
+  inicio: string | null;
+}
+
+export interface JornadaPegada {
+  numero: number | null;
+  partidos: PartidoPegado[];
+  /** Líneas con texto que no parecen un partido */
+  ignoradas: string[];
+}
+
+const DIAS_SEMANA =
+  /\b(lun(es)?|mar(tes)?|mi[eé](rcoles)?|jue(ves)?|vie(rnes)?|s[aá]b(ado)?|dom(ingo)?)\b\.?,?/gi;
+// "29/09", "29/09/2026" o "29-09-2026" (sin año con guion sería un marcador)
+const RE_FECHA = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b|\b(\d{1,2})-(\d{1,2})-(\d{4})\b/;
+const RE_HORA = /\b(\d{1,2})[:.h](\d{2})\s*h?\b/;
+const RUIDO = /^(pleno( al)? 15|partidos?|jornada.*|1\s*x\s*2|[1x2 ]+|p15|local|visitante|fecha|hora)$/i;
+
+/**
+ * Reconoce los 15 partidos pegados desde cualquier sitio (p. ej. la web de
+ * loteriasyapuestas.es). Admite "1. Local - Visitante 29/09 20:45", fechas u
+ * horas en una línea aparte que valen para los partidos siguientes, marcas
+ * "(m)"/"(f)" y, como último recurso, un equipo por línea.
+ * `fechaSorteo` (YYYY-MM-DD) sirve para deducir el año de fechas sin año.
+ */
+export function parsearJornada(texto: string, fechaSorteo: string): JornadaPegada {
+  const numero = Number(texto.match(/jornada\s*(?:n[ºo.]?\s*)?(\d{1,2})\b/i)?.[1] ?? NaN);
+  const partidos: PartidoPegado[] = [];
+  const sueltos: string[] = [];
+  let dia: { d: number; m: number; y: number | null } | null = null;
+  let hora: { h: number; min: number } | null = null;
+
+  for (const bruta of texto.split(/\r?\n/)) {
+    let l = bruta.replace(/\t+/g, " - ").trim();
+    if (!l) continue;
+
+    const f = l.match(RE_FECHA);
+    if (f) {
+      const [d, m, y] = f[1] ? [f[1], f[2], f[3]] : [f[4], f[5], f[6]];
+      dia = { d: Number(d), m: Number(m), y: y ? Number(y.length === 2 ? "20" + y : y) : null };
+      l = l.replace(f[0], " ");
+    }
+    const h = l.match(RE_HORA);
+    if (h) {
+      hora = { h: Number(h[1]), min: Number(h[2]) };
+      l = l.replace(h[0], " ");
+    }
+    l = l
+      .replace(DIAS_SEMANA, " ")
+      .replace(/\((m|f)\)/gi, " ")
+      .replace(/^\s*(p?\d{1,2})\s*[.)ºª:-]?\s+/i, "") // nº de partido
+      .replace(/\s+/g, " ")
+      .replace(/^[\s-–]+|[\s-–]+$/g, "")
+      .trim();
+    if (!l || RUIDO.test(l)) continue;
+
+    let [local, visitante] = l.split(/\s+(?:-|–|vs\.?)\s+|\s*[–]\s*|\s+-|-\s+/i);
+    // "Local-Visitante" sin espacios, solo si hay un único guion
+    if (!visitante && (l.match(/-/g) ?? []).length === 1) [local, visitante] = l.split("-");
+    const inicio = dia && hora ? madridAIso(dia, hora, fechaSorteo) : null;
+    if (local?.trim() && visitante?.trim()) {
+      partidos.push({ local: local.trim(), visitante: visitante.trim(), inicio });
+    } else {
+      sueltos.push(l);
+    }
+  }
+
+  // Último recurso: un equipo por línea (30 líneas sin separador)
+  if (partidos.length === 0 && sueltos.length === 30) {
+    for (let i = 0; i < 30; i += 2) partidos.push({ local: sueltos[i], visitante: sueltos[i + 1], inicio: null });
+    sueltos.length = 0;
+  }
+
+  return { numero: Number.isFinite(numero) && numero > 0 ? numero : null, partidos, ignoradas: sueltos };
+}
+
+/** Día y hora de Madrid -> ISO UTC. Sin año, elige el más cercano a la fecha del sorteo. */
+function madridAIso(
+  dia: { d: number; m: number; y: number | null },
+  hora: { h: number; min: number },
+  fechaSorteo: string,
+): string | null {
+  if (dia.m < 1 || dia.m > 12 || dia.d < 1 || dia.d > 31 || hora.h > 23 || hora.min > 59) return null;
+  const ref = new Date(fechaSorteo + "T12:00:00Z");
+  let y = dia.y ?? ref.getUTCFullYear();
+  if (dia.y == null) {
+    const candidato = Date.UTC(y, dia.m - 1, dia.d);
+    if (candidato - ref.getTime() > 180 * 864e5) y--;
+    else if (ref.getTime() - candidato > 180 * 864e5) y++;
+  }
+  const supuesto = Date.UTC(y, dia.m - 1, dia.d, hora.h, hora.min);
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Madrid",
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(new Date(supuesto));
+  const n = (t: string) => Number(partes.find((p) => p.type === t)!.value);
+  const offset = Date.UTC(n("year"), n("month") - 1, n("day"), n("hour"), n("minute")) - supuesto;
+  return new Date(supuesto - offset).toISOString();
 }

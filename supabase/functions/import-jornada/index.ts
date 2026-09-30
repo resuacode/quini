@@ -1,16 +1,13 @@
-// Importa la próxima jornada de la quiniela y enlaza sus partidos con API-Football.
+// Enlaza los partidos de una jornada con API-Football para tener el directo.
 //
-//   { "action": "importar" }                 -> SELAE -> jornada + 15 partidos + enlazar
-//   { "action": "enlazar", "jornada_id": N } -> solo enlaza partidos sin fixture_id
+//   { "action": "enlazar", "jornada_id": N } -> enlaza los partidos sin fixture_id
 //
-// SELAE no tiene API pública: se usan los mismos servicios JSON que su web.
-// Si fallan, la web ofrece el alta manual de los 15 partidos.
+// La jornada y sus 15 partidos se dan de alta desde la web (pegando la lista):
+// SELAE bloquea las peticiones que salen de los servidores de Supabase.
 import { adminClient, consumirCuota, usuarioDe } from "../_shared/supabase.ts";
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { apiFootball, apiFootballConfigurada, type Fixture, temporadaApi } from "../_shared/apifootball.ts";
+import { apiFootball, apiFootballConfigurada, type Fixture } from "../_shared/apifootball.ts";
 import { parecido } from "../_shared/teams.ts";
-import { extraerJornada, extraerProximo } from "../_shared/parsers.ts";
-import { selae } from "../_shared/selae.ts";
 
 const LIMITE_DIARIO = Number(Deno.env.get("API_FOOTBALL_DAILY_LIMIT") ?? 90);
 const TOLERANCIA_HORA_MS = 30 * 60 * 1000;
@@ -24,80 +21,16 @@ Deno.serve(async (req) => {
   if (!(await usuarioDe(req))) return json({ ok: false, error: "No autenticado" }, 401);
 
   try {
-    const db = adminClient();
     const body = await req.json().catch(() => ({}));
-
-    if (body?.action === "enlazar") {
-      if (!body.jornada_id) return json({ ok: false, error: "Falta jornada_id" }, 400);
-      return json({ ok: true, ...(await enlazar(db, Number(body.jornada_id))) });
+    if (body?.action !== "enlazar" || !body.jornada_id) {
+      return json({ ok: false, error: 'Uso: { "action": "enlazar", "jornada_id": N }' }, 400);
     }
-
-    // 1. Próximo sorteo (fecha y nº de jornada) y 2. sus partidos
-    let jornada;
-    let cierre: string | null = null;
-    try {
-      const proximo = extraerProximo(await selae("proximosv3?game_id=LAQU&num=1"));
-      if (!proximo) throw new Error("no hay próximo sorteo");
-      cierre = proximo.cierre;
-      const detalle = await selae(`fechav3?game_id=LAQU&fecha_sorteo=${proximo.fecha.replaceAll("-", "")}`);
-      jornada = extraerJornada(detalle);
-      if (!jornada) {
-        console.warn("Respuesta de SELAE no reconocida:", JSON.stringify(detalle).slice(0, 2000));
-        throw new Error("no se encontraron los 15 partidos");
-      }
-      jornada.numero ??= proximo.numero;
-      jornada.fecha ??= proximo.fecha;
-    } catch (e) {
-      return json({ ok: false, error: `No se pudo leer la jornada de SELAE (${msg(e)}). Da de alta la jornada a mano.` }, 502);
-    }
-
-    const fecha = jornada.fecha!;
-    const temporada = temporadaDe(fecha);
-    let numero = jornada.numero;
-    if (!numero) {
-      const { data } = await db.from("jornadas").select("numero").eq("temporada", temporada)
-        .order("numero", { ascending: false }).limit(1);
-      numero = (data?.[0]?.numero ?? 0) + 1;
-    }
-
-    const { data: existente } = await db.from("jornadas").select("id")
-      .eq("temporada", temporada).eq("numero", numero).maybeSingle();
-    if (existente) {
-      return json({ ok: true, jornada_id: existente.id, aviso: "La jornada ya existía.", ...(await enlazar(db, existente.id)) });
-    }
-
-    const { data: nueva, error } = await db.from("jornadas")
-      .insert({ temporada, numero, fecha, cierre }).select("id").single();
-    if (error) throw error;
-
-    const { error: e2 } = await db.from("partidos").insert(
-      jornada.partidos.map((p, i) => ({
-        jornada_id: nueva.id,
-        posicion: i + 1,
-        local: p.local,
-        visitante: p.visitante,
-        inicio: p.inicio,
-      })),
-    );
-    if (e2) throw e2;
-
-    let enlace = {};
-    try {
-      enlace = await enlazar(db, nueva.id);
-    } catch (e) {
-      enlace = { aviso: `Jornada creada, pero no se pudo enlazar con API-Football: ${msg(e)}` };
-    }
-    return json({ ok: true, jornada_id: nueva.id, ...enlace });
+    return json({ ok: true, ...(await enlazar(adminClient(), Number(body.jornada_id))) });
   } catch (e) {
     console.error(e);
     return json({ ok: false, error: msg(e) }, 500);
   }
 });
-
-function temporadaDe(fecha: string): string {
-  const inicio = temporadaApi(new Date(fecha + "T12:00:00Z"));
-  return `${inicio}-${String((inicio + 1) % 100).padStart(2, "0")}`;
-}
 
 /** Día (hora de Madrid) de un instante, en formato YYYY-MM-DD. */
 function diaMadrid(iso: string): string {

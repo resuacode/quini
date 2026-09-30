@@ -4,24 +4,28 @@ Web para llevar el pique de aciertos en La Quiniela entre dos (o más) personas 
 
 - Cada uno se registra con **email y contraseña** y mete su columna (14 signos + Pleno al 15).
 - Los aciertos se actualizan **en directo** mientras se juegan los partidos.
-- Al acabar la jornada se aplica el **resultado oficial** y la jornada cuenta para la temporada.
+- Al acabar la jornada, esta cuenta para la temporada y se contrasta con el **resultado oficial**.
 - La página **Temporada** muestra las quinielas ganadas por cada uno (quien más acierta gana, aunque no haya premio), los aciertos totales y la tabla jornada a jornada.
 
-Todo funciona con planes gratuitos: **Supabase** (base de datos, auth, realtime, Edge Functions y cron), **GitHub Pages** (frontend) y **API-Football** (directo, opcional).
+Todo funciona con planes gratuitos: **Supabase** (base de datos, auth, realtime, Edge Functions y cron), **GitHub Pages** (frontend), **API-Football** (directo) y **loteriasapi.com** (resultado oficial).
 
 ## Cómo funciona
 
 | Qué | De dónde sale |
 | --- | --- |
-| Los 15 partidos de la próxima jornada, con su hora | SELAE: los servicios JSON de loteriasyapuestas.es (`proximosv3` + `fechav3`). Si fallan, se meten a mano pegando 15 líneas `Local - Visitante`. |
+| Los 15 partidos de la jornada | Se pegan en **Gestión**, copiados de cualquier sitio (p. ej. loteriasyapuestas.es). El formulario reconoce número de jornada, número de partido, fecha, hora y marcas `(m)`/`(f)`, y enseña una vista previa. |
 | Marcadores en directo | [API-Football](https://www.api-football.com/) (plan gratis, 100 peticiones/día). Los partidos se enlazan por hora de inicio y nombre de los equipos, así que valen también Segunda, selecciones o Liga F. |
-| Resultado oficial (signos + pleno) | SELAE (`fechav3`). Publica el signo de cada partido poco después de que acabe, así que se aplica partido a partido y la jornada se cierra al tener los 15. |
+| Cierre de la jornada | Automático cuando API-Football da los 15 partidos por terminados. |
+| Resultado oficial (aplazados, partidos sin enlazar) | [loteriasapi.com](https://loteriasapi.com), consultado pocas veces por jornada. Como intento extra se prueba SELAE, aunque bloquea las peticiones desde Supabase. |
 
 Las Edge Functions se ejecutan solas con `pg_cron`:
 
 - **`sync-live`**, cada 5 minutos. Solo llama a API-Football si hay partidos en juego o a punto de empezar, y pide los 15 partidos en una sola petición. La tabla `api_usage` pone un tope diario (90 por defecto).
-- **`sync-oficial`**, cada 10 minutos. Solo consulta SELAE si hay una jornada empezada y sin finalizar de la última semana. Aplica cada signo oficial en cuanto se publica y, con los 14 signos y el pleno, marca la jornada como `finalizada`. Antes comprueba que los equipos de SELAE coinciden con los de la jornada, para no aplicar signos a partidos equivocados.
-- **`import-jornada`**: se lanza desde la web (Gestión → *Importar próxima jornada*).
+- **`sync-oficial`**, cada 10 minutos:
+  - Cierra la jornada en cuanto API-Football da los 15 partidos por terminados.
+  - Cuando la jornada ha acabado, pide el resultado oficial a loteriasapi, como mucho una vez cada 3 horas y con un tope diario de 4 peticiones. Solo sigue intentándolo durante la semana siguiente a la jornada.
+  - Antes de aplicar los signos, comprueba que los equipos coinciden con los de la jornada.
+- **`import-jornada`**: enlaza los partidos de una jornada con API-Football. Se lanza sola al crear la jornada y con el botón *Enlazar con API-Football*.
 
 Las apuestas se pueden cambiar hasta el inicio del primer partido; lo garantiza RLS en la base de datos, no solo la web. El Pleno al 15 cuenta como un acierto más, así que el máximo son 15. Si empatáis a aciertos, la jornada cuenta como empate.
 
@@ -47,15 +51,18 @@ supabase/tests/           tests SQL (pgTAP)
    npx supabase functions deploy
    ```
 
-3. Configura la clave de API-Football. Es opcional: sin ella no hay marcadores en directo, pero los resultados oficiales llegan igual por SELAE.
+3. Configura las claves de las APIs. Las dos son opcionales:
+   - Sin API-Football no hay directo, y los resultados se meten a mano en Gestión.
+   - Sin loteriasapi, la jornada se cierra igual con los resultados de API-Football, pero sin confirmación oficial.
 
    ```bash
    npx supabase secrets set API_FOOTBALL_KEY=<clave de dashboard.api-football.com>
-   # Opcional: tope diario de peticiones (por defecto 90; el plan gratis permite 100)
-   npx supabase secrets set API_FOOTBALL_DAILY_LIMIT=90
+   npx supabase secrets set LOTERIAS_API_KEY=<clave de loteriasapi.com>
+   # Opcional: topes diarios (por defecto 90 y 4)
+   npx supabase secrets set API_FOOTBALL_DAILY_LIMIT=90 LOTERIAS_API_DAILY_LIMIT=4
    ```
 
-   Antes, comprueba que tu plan gratuito cubre la temporada en curso. Si la respuesta trae partidos en `response` y `errors` está vacío, vale:
+   Antes, comprueba que el plan gratuito de API-Football cubre la temporada en curso. Si la respuesta trae partidos en `response` y `errors` está vacío, vale:
 
    ```bash
    curl -s -H "x-apisports-key: <clave>" \
@@ -83,10 +90,10 @@ supabase/tests/           tests SQL (pgTAP)
 
 ## Uso
 
-1. **Gestión → Importar próxima jornada** crea la jornada con sus 15 partidos y los enlaza con API-Football. Si algún partido no se enlaza, puedes poner su *fixture* a mano o meter el resultado directamente.
+1. En **Gestión → Nueva jornada**, pega los 15 partidos, revisa la vista previa y pulsa *Crear jornada*. Se enlazan solos con API-Football. Si alguno no se enlaza, puedes poner su *fixture* a mano o meter el resultado directamente.
 2. Cada uno entra en **Jornada → Hacer mi apuesta**.
 3. Durante la jornada, la página se actualiza sola. Los aciertos aparecen en verde claro mientras son provisionales y en verde sólido cuando el partido termina.
-4. Según acaba cada partido, `sync-oficial` aplica su signo oficial de SELAE. Con los 15 resultados, la jornada se cierra y suma en **Temporada**. También puedes forzarlo con *Traer resultado oficial* o corregir cualquier dato en Gestión.
+4. Cuando acaban los 15 partidos, la jornada se cierra y suma en **Temporada**. Después se contrasta con el resultado oficial; puedes forzarlo con *Traer resultado oficial* o corregir cualquier dato en Gestión.
 
 ## Desarrollo local
 
@@ -103,11 +110,12 @@ Tests:
 
 ```bash
 npx supabase test db                      # SQL: aciertos, pleno, clasificación y RLS
-npx deno test supabase/functions/_shared  # parsers de SELAE y cruce de equipos
+npx deno test supabase/functions/_shared  # parser de resultados y cruce de equipos
 cd web && npm run build                   # typecheck + build
 ```
 
 ## Limitaciones conocidas
 
-- SELAE no tiene una API pública: se usan los mismos servicios que su web, que podrían cambiar o bloquear peticiones. Si pasa, se pueden dar de alta las jornadas y meter los resultados a mano en Gestión.
-- Hay que comprobar que el plan gratuito de API-Football da acceso a la temporada en curso. Si no, el directo no funcionará, aunque sí los resultados oficiales.
+- SELAE (loteriasyapuestas.es) no tiene una API pública y bloquea las peticiones que salen de servidores como los de Supabase, por eso los partidos de cada jornada se pegan a mano.
+- La documentación de loteriasapi.com no concreta el formato de respuesta de la quiniela ni la cuota gratuita, así que el parser acepta varias formas y las consultas están muy espaciadas.
+- Hay que comprobar que el plan gratuito de API-Football da acceso a la temporada en curso. Si no, no hay directo ni cierre automático: los resultados se meten a mano o llegan con loteriasapi.

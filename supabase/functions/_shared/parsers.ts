@@ -1,18 +1,17 @@
-// Parsers para las respuestas JSON de SELAE (loteriasyapuestas.es/servicios).
-// No es una API documentada, así que los campos se buscan por nombre con
-// alternativas en vez de asumir una estructura fija.
+// Parser de resultados oficiales de la quiniela. Acepta las respuestas de
+// loteriasapi.com y de SELAE (loteriasyapuestas.es/servicios/fechav3). Ninguna
+// está bien documentada, así que los campos se buscan por nombre con
+// alternativas en vez de asumir una estructura fija:
+//
+//   loteriasapi: { draw_date, matchday, matches: [{ position, home, away, sign }],
+//                  pleno_15: { home_goals, away_goals } }   (a veces dentro de { data })
+//   SELAE:       [{ fecha_sorteo, jornada, partidos: [{ local, visitante, signo: "1" | "2-M" }] }]
 
 // deno-lint-ignore no-explicit-any
 type Obj = Record<string, any>;
 
 export type Signo = "1" | "X" | "2";
 export type Pleno = "0" | "1" | "2" | "M";
-
-// ------------------------------------------------------------------
-// Resultados: fechav3?game_id=LAQU&fecha_sorteo=AAAAMMDD
-//   -> [{ fecha_sorteo, jornada: "9", partidos: [{ local, visitante, signo: "1" | "2-M", marcador }] }]
-// Los partidos aún sin jugar vienen sin signo.
-// ------------------------------------------------------------------
 
 export interface ResultadoOficial {
   fecha: string | null;
@@ -55,13 +54,25 @@ function aResultado(o: Obj): ResultadoOficial {
     const s = String(p.signo ?? p.sign ?? "").trim().toUpperCase();
     if (pos <= 14 && (s === "1" || s === "X" || s === "2")) signos.set(pos, s);
     if (pos === 15 && s) pleno = plenoDe(s);
-    if (typeof p.local === "string" && typeof p.visitante === "string") {
-      equipos.set(pos, { local: limpiarEquipo(p.local), visitante: limpiarEquipo(p.visitante) });
+    const local = p.local ?? p.home;
+    const visitante = p.visitante ?? p.away;
+    if (typeof local === "string" && typeof visitante === "string") {
+      equipos.set(pos, { local: limpiarEquipo(local), visitante: limpiarEquipo(visitante) });
     }
   });
 
-  const fecha = fechaDe(o.fecha_sorteo ?? o.fecha);
-  const numero = Number(o.jornada ?? o.numero_jornada ?? NaN);
+  // loteriasapi da el pleno aparte, con los goles de cada equipo
+  const p15 = o.pleno_15 ?? o.pleno15;
+  if (p15 && typeof p15 === "object") {
+    const local = aPleno(p15.home_goals ?? p15.home ?? p15.local);
+    const visitante = aPleno(p15.away_goals ?? p15.away ?? p15.visitante);
+    if (local && visitante) pleno = { local, visitante };
+  } else if (typeof p15 === "string") {
+    pleno = plenoDe(p15) ?? pleno;
+  }
+
+  const fecha = fechaDe(o.fecha_sorteo ?? o.draw_date ?? o.drawDate ?? o.fecha ?? o.date);
+  const numero = Number(o.jornada ?? o.matchday ?? o.numero_jornada ?? NaN);
 
   return { fecha, numero: Number.isFinite(numero) ? numero : null, signos, pleno, equipos };
 }
@@ -83,97 +94,9 @@ export function plenoDe(v: string): ResultadoOficial["pleno"] {
   return local && visitante ? { local, visitante } : null;
 }
 
-// ------------------------------------------------------------------
-// SELAE (loteriasyapuestas.es/servicios)
-//   proximosv3?game_id=LAQU&num=1
-//     -> [{ fecha: "2026-09-30 00:00:00", cierre: "2026-09-29 20:45:00", jornada: 10, ... }]
-//   fechav3?game_id=LAQU&fecha_sorteo=20260930
-//     -> [{ fecha_sorteo, jornada: "10", partidos: [{ local: "Ceuta (m)", visitante,
-//           fecha: "2026/09/29 20:45:00" | fecha_completa, signo?: "1" | "2-M", marcador? }] }]
-// ------------------------------------------------------------------
-
-export interface ProximoSorteo {
-  fecha: string;
-  numero: number | null;
-  cierre: string | null;
-}
-
-export function extraerProximo(raiz: unknown): ProximoSorteo | null {
-  const lista = Array.isArray(raiz) ? raiz : [raiz];
-  for (const o of lista as Obj[]) {
-    const fecha = fechaDe(o?.fecha ?? o?.fecha_sorteo);
-    if (!fecha) continue;
-    const numero = Number(o.jornada ?? o.numero_jornada ?? NaN);
-    return {
-      fecha,
-      numero: Number.isFinite(numero) && numero > 0 ? numero : null,
-      cierre: typeof o.cierre === "string" ? horaMadridAIso(o.cierre) : null,
-    };
-  }
-  return null;
-}
-
-export interface PartidoSelae {
-  local: string;
-  visitante: string;
-  inicio: string | null;
-}
-
-export interface JornadaSelae {
-  numero: number | null;
-  fecha: string | null;
-  partidos: PartidoSelae[];
-}
-
-/** Busca un objeto con una lista de ≥15 partidos (local/visitante). */
-export function extraerJornada(raiz: unknown): JornadaSelae | null {
-  let encontrada: JornadaSelae | null = null;
-  const visitar = (n: unknown) => {
-    if (encontrada || !n || typeof n !== "object") return;
-    if (Array.isArray(n)) return n.forEach(visitar);
-    const o = n as Obj;
-    for (const v of Object.values(o)) {
-      if (!Array.isArray(v) || v.length < 15) continue;
-      const partidos = v.map(partidoSelae).filter((p): p is PartidoSelae => p !== null);
-      if (partidos.length >= 15) {
-        const numero = Number(o.jornada ?? o.num_jornada ?? o.numero_jornada ?? o.numJornada ?? NaN);
-        encontrada = {
-          numero: Number.isFinite(numero) && numero > 0 ? numero : null,
-          fecha: fechaDe(o.fecha_sorteo ?? o.fecha ?? o.dia_sorteo ?? o.date),
-          partidos: partidos.slice(0, 15),
-        };
-        return;
-      }
-    }
-    Object.values(o).forEach(visitar);
-  };
-  visitar(raiz);
-  return encontrada;
-}
-
 /** Quita las marcas de SELAE: "Ceuta (m)" -> "Ceuta". */
 export function limpiarEquipo(nombre: string): string {
   return nombre.replace(/\s*\((m|f)\)\s*$/i, "").trim();
-}
-
-function partidoSelae(p: unknown): PartidoSelae | null {
-  if (!p || typeof p !== "object") return null;
-  const o = p as Obj;
-  let local = o.local ?? o.equipo_local ?? o.home ?? o.nombre_local ?? o.equipoLocal;
-  let visitante = o.visitante ?? o.equipo_visitante ?? o.away ?? o.nombre_visitante ?? o.equipoVisitante;
-  if (typeof local !== "string" || typeof visitante !== "string") {
-    // Algunos formatos traen "Local - Visitante" en un único campo
-    const partido = o.partido ?? o.nombre ?? o.match;
-    if (typeof partido !== "string") return null;
-    [local, visitante] = partido.split(/\s+-\s+|-/);
-    if (!local?.trim() || !visitante?.trim()) return null;
-  }
-  let inicio: string | null = null;
-  if (typeof o.fecha_completa === "string") inicio = horaMadridAIso(o.fecha_completa);
-  else if (typeof o.fecha === "string") {
-    inicio = horaMadridAIso(typeof o.hora === "string" ? `${o.fecha} ${o.hora}` : o.fecha);
-  }
-  return { local: limpiarEquipo(local), visitante: limpiarEquipo(visitante), inicio };
 }
 
 export function fechaDe(v: unknown): string | null {
@@ -184,28 +107,4 @@ export function fechaDe(v: unknown): string | null {
   const es = s.match(/(\d{2})[-/](\d{2})[-/](\d{4})/);
   if (es) return `${es[3]}-${es[2]}-${es[1]}`;
   return null;
-}
-
-/** "2026/09/29 20:45:00" (hora de Madrid) -> ISO UTC. Null si no trae hora. */
-export function horaMadridAIso(v: string): string | null {
-  const fecha = fechaDe(v);
-  const hora = v.match(/(\d{1,2}):(\d{2})/);
-  if (!fecha || !hora) return null;
-  const [y, m, d] = fecha.split("-").map(Number);
-  const supuesto = Date.UTC(y, m - 1, d, Number(hora[1]), Number(hora[2]));
-  return new Date(supuesto - offsetMadridMin(new Date(supuesto)) * 60000).toISOString();
-}
-
-function offsetMadridMin(d: Date): number {
-  const partes = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Europe/Madrid",
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).formatToParts(d);
-  const n = (t: string) => Number(partes.find((p) => p.type === t)!.value);
-  return (Date.UTC(n("year"), n("month") - 1, n("day"), n("hour"), n("minute")) - d.getTime()) / 60000;
 }

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Aviso, Cargando, EstadoBadge } from "../components/ui";
 import { useJornada } from "../hooks/useJornada";
-import { fecha, parsearPartidos, PLENOS, SIGNOS } from "../lib/quiniela";
+import { fecha, fechaHora, parsearJornada, PLENOS, SIGNOS } from "../lib/quiniela";
 import { invocar, supabase } from "../lib/supabase";
 import type { EstadoJornada, Jornada, Partido } from "../lib/types";
 
@@ -14,15 +14,11 @@ export default function Gestion() {
 }
 
 // ---------------------------------------------------------------------------
-// Lista + importar + alta manual
+// Lista + nueva jornada
 // ---------------------------------------------------------------------------
 
 function ListaJornadas() {
-  const navigate = useNavigate();
   const [jornadas, setJornadas] = useState<Jornada[] | null>(null);
-  const [msg, setMsg] = useState<Msg>(null);
-  const [importando, setImportando] = useState(false);
-  const [manual, setManual] = useState(false);
 
   useEffect(() => {
     supabase
@@ -33,23 +29,6 @@ function ListaJornadas() {
       .then(({ data }) => setJornadas(data ?? []));
   }, []);
 
-  async function importar() {
-    setImportando(true);
-    setMsg(null);
-    try {
-      const r = await invocar<{ jornada_id: number; enlazados?: number; sin_enlazar?: number[]; aviso?: string }>(
-        "import-jornada",
-        { action: "importar" },
-      );
-      navigate(`/gestion/${r.jornada_id}`, { state: { resumen: resumenEnlace(r) } });
-    } catch (e) {
-      setMsg({ tipo: "error", texto: (e as Error).message });
-      setManual(true);
-    } finally {
-      setImportando(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-black tracking-tight">Gestión</h1>
@@ -57,18 +36,18 @@ function ListaJornadas() {
       <div className="tarjeta space-y-3 p-5">
         <h2 className="font-bold">Nueva jornada</h2>
         <p className="text-sm text-slate-600 dark:text-slate-400">
-          Importa automáticamente los 15 partidos de la próxima jornada o, si no funciona, pégalos a mano.
+          Copia los 15 partidos de la quiniela (por ejemplo, desde{" "}
+          <a
+            href="https://www.loteriasyapuestas.es/es/la-quiniela"
+            target="_blank"
+            rel="noreferrer"
+            className="text-marca underline"
+          >
+            loteriasyapuestas.es
+          </a>
+          ) y pégalos aquí. Si traen fecha y hora, se usan para el cierre de apuestas y para enlazar el directo.
         </p>
-        <div className="flex flex-wrap gap-2">
-          <button className="boton" onClick={importar} disabled={importando}>
-            {importando ? "Importando…" : "Importar próxima jornada"}
-          </button>
-          <button className="boton-sec" onClick={() => setManual((m) => !m)}>
-            Alta manual
-          </button>
-        </div>
-        {msg && <Aviso tipo={msg.tipo}>{msg.texto}</Aviso>}
-        {manual && <AltaManual />}
+        <AltaJornada />
       </div>
 
       <div className="tarjeta overflow-hidden">
@@ -99,7 +78,7 @@ function ListaJornadas() {
   );
 }
 
-function AltaManual() {
+function AltaJornada() {
   const navigate = useNavigate();
   const [numero, setNumero] = useState("");
   const [dia, setDia] = useState(proximoDomingo());
@@ -107,8 +86,10 @@ function AltaManual() {
   const [error, setError] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
 
-  const partidos = parsearPartidos(texto);
-  const validos = partidos.length === 15 && partidos.every((p) => p.local && p.visitante);
+  const { numero: numeroPegado, partidos, ignoradas } = parsearJornada(texto, dia);
+  const numeroFinal = numero || (numeroPegado ? String(numeroPegado) : "");
+  const validos = partidos.length === 15;
+  const conHora = partidos.filter((p) => p.inicio).length;
 
   async function crear() {
     setGuardando(true);
@@ -116,7 +97,7 @@ function AltaManual() {
     const { data: temporada } = await supabase.rpc("temporada_de", { d: dia });
     const { data: j, error } = await supabase
       .from("jornadas")
-      .insert({ temporada, numero: Number(numero), fecha: dia })
+      .insert({ temporada, numero: Number(numeroFinal), fecha: dia })
       .select("id")
       .single();
     if (error) {
@@ -124,9 +105,15 @@ function AltaManual() {
       setError(error.code === "23505" ? "Ya existe esa jornada en la temporada." : error.message);
       return;
     }
-    const { error: e2 } = await supabase
-      .from("partidos")
-      .insert(partidos.map((p, i) => ({ jornada_id: j.id, posicion: i + 1, local: p.local, visitante: p.visitante })));
+    const { error: e2 } = await supabase.from("partidos").insert(
+      partidos.map((p, i) => ({
+        jornada_id: j.id,
+        posicion: i + 1,
+        local: p.local,
+        visitante: p.visitante,
+        inicio: p.inicio,
+      })),
+    );
     if (e2) {
       setGuardando(false);
       setError(e2.message);
@@ -147,11 +134,17 @@ function AltaManual() {
   }
 
   return (
-    <div className="space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+    <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <label>
           <span className="etiqueta">Nº de jornada</span>
-          <input className="campo" type="number" min={1} value={numero} onChange={(e) => setNumero(e.target.value)} />
+          <input
+            className="campo"
+            type="number"
+            min={1}
+            value={numeroFinal}
+            onChange={(e) => setNumero(e.target.value)}
+          />
         </label>
         <label>
           <span className="etiqueta">Fecha del sorteo</span>
@@ -159,20 +152,46 @@ function AltaManual() {
         </label>
       </div>
       <label className="block">
-        <span className="etiqueta">Partidos (uno por línea, "Local - Visitante"; el 15º es el pleno)</span>
+        <span className="etiqueta">Los 15 partidos (el 15º es el pleno)</span>
         <textarea
-          className="campo h-72 font-mono text-xs"
-          placeholder={"Real Madrid - Villarreal\nBarcelona - Sevilla\n…"}
+          className="campo h-60 font-mono text-xs"
+          placeholder={"1. Real Madrid - Villarreal   sáb 04/10 21:00\n2. Barcelona - Sevilla   dom 05/10 16:15\n…"}
           value={texto}
           onChange={(e) => setTexto(e.target.value)}
         />
       </label>
-      <p className={`text-xs ${validos ? "text-emerald-600" : "text-slate-500"}`}>
-        {partidos.length}/15 partidos reconocidos
-        {partidos.some((p) => !p.visitante) && " · alguna línea no tiene el formato «Local - Visitante»"}
-      </p>
+
+      {texto.trim() && (
+        <div className="space-y-2">
+          <p className={`text-xs font-semibold ${validos ? "text-emerald-600" : "text-marca"}`}>
+            {partidos.length}/15 partidos reconocidos
+            {partidos.length > 0 && ` · ${conHora} con fecha y hora`}
+            {partidos.length > 15 && " · sobran partidos: deja solo los 15 de la quiniela"}
+          </p>
+          {partidos.length > 0 && (
+            <ol className="divide-y divide-slate-100 rounded-xl border border-slate-200 text-sm dark:divide-slate-800 dark:border-slate-800">
+              {partidos.map((p, i) => (
+                <li key={i} className="flex items-center gap-3 px-3 py-1.5">
+                  <span className="w-6 text-xs font-semibold text-slate-400">{i === 14 ? "P15" : i + 1}</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {p.local} <span className="text-slate-400">-</span> {p.visitante}
+                  </span>
+                  <span className="shrink-0 text-xs text-slate-500">{p.inicio ? fechaHora(p.inicio) : "sin hora"}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+          {ignoradas.length > 0 && (
+            <p className="text-xs text-slate-500">
+              Líneas ignoradas: {ignoradas.slice(0, 5).map((l) => `«${l}»`).join(", ")}
+              {ignoradas.length > 5 && ` y ${ignoradas.length - 5} más`}
+            </p>
+          )}
+        </div>
+      )}
+
       {error && <Aviso tipo="error">{error}</Aviso>}
-      <button className="boton" disabled={!validos || !numero || guardando} onClick={crear}>
+      <button className="boton" disabled={!validos || !numeroFinal || guardando} onClick={crear}>
         {guardando ? "Creando…" : "Crear jornada"}
       </button>
     </div>
