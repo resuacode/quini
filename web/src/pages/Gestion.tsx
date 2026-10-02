@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Aviso, Cargando, EstadoBadge } from "../components/ui";
 import { useJornada } from "../hooks/useJornada";
-import { type Importacion, leerImportacion, urlMarcador } from "../lib/marcador";
 import { fecha, fechaHora, parsearJornada, PLENOS, SIGNOS } from "../lib/quiniela";
 import { invocar, supabase } from "../lib/supabase";
 import type { EstadoJornada, Jornada, Partido } from "../lib/types";
@@ -19,9 +18,11 @@ export default function Gestion() {
 // ---------------------------------------------------------------------------
 
 function ListaJornadas() {
+  const navigate = useNavigate();
   const [jornadas, setJornadas] = useState<Jornada[] | null>(null);
-  const [params] = useSearchParams();
-  const importada = leerImportacion(params.get("importar"));
+  const [importando, setImportando] = useState(false);
+  const [msg, setMsg] = useState<Msg>(null);
+  const [manual, setManual] = useState(false);
 
   useEffect(() => {
     supabase
@@ -32,34 +33,60 @@ function ListaJornadas() {
       .then(({ data }) => setJornadas(data ?? []));
   }, []);
 
+  async function importar() {
+    setImportando(true);
+    setMsg(null);
+    try {
+      const r = await invocar<{ jornada_id: number; enlazados?: number; sin_enlazar?: number[]; aviso?: string }>(
+        "import-jornada",
+        { action: "importar" },
+      );
+      navigate(`/gestion/${r.jornada_id}`, { state: { resumen: resumenEnlace(r) } });
+    } catch (e) {
+      setMsg({ tipo: "error", texto: (e as Error).message });
+      setManual(true);
+    } finally {
+      setImportando(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-black tracking-tight">Gestión</h1>
 
       <div className="tarjeta space-y-3 p-5">
         <h2 className="font-bold">Nueva jornada</h2>
-        {importada ? (
-          <Aviso tipo="ok">
-            Jornada importada desde loteriasyapuestas.es. Revisa los partidos y pulsa <b>Crear jornada</b>.
-          </Aviso>
-        ) : (
-          <p className="text-sm text-slate-600 dark:text-slate-400">
-            Importa la jornada con el marcador <b>Importar a Quini</b> (más abajo) o copia los 15 partidos desde{" "}
-            <a
-              href="https://www.loteriasyapuestas.es/es/la-quiniela"
-              target="_blank"
-              rel="noreferrer"
-              className="text-marca underline"
-            >
-              loteriasyapuestas.es
-            </a>{" "}
-            y pégalos aquí. Si traen fecha y hora, se usan para el cierre de apuestas y para enlazar el directo.
-          </p>
+        <p className="text-sm text-slate-600 dark:text-slate-400">
+          Importa los 15 partidos de la próxima jornada, con sus horarios, y enlázalos con el directo.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button className="boton" onClick={importar} disabled={importando}>
+            {importando ? "Importando…" : "Importar próxima jornada"}
+          </button>
+          <button className="boton-sec" onClick={() => setManual((m) => !m)}>
+            Pegar a mano
+          </button>
+        </div>
+        {msg && <Aviso tipo={msg.tipo}>{msg.texto}</Aviso>}
+        {manual && (
+          <div className="space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              Copia los 15 partidos desde{" "}
+              <a
+                href="https://www.loteriasyapuestas.es/es/la-quiniela"
+                target="_blank"
+                rel="noreferrer"
+                className="text-marca underline"
+              >
+                loteriasyapuestas.es
+              </a>{" "}
+              (o cualquier otra web) y pégalos aquí. Si traen fecha y hora, se usan para el cierre de apuestas y para
+              enlazar el directo.
+            </p>
+            <AltaJornada />
+          </div>
         )}
-        <AltaJornada key={importada?.texto ?? ""} inicial={importada} />
       </div>
-
-      <Marcador />
 
       <div className="tarjeta overflow-hidden">
         <h2 className="px-5 pt-4 pb-2 font-bold">Jornadas</h2>
@@ -89,67 +116,11 @@ function ListaJornadas() {
   );
 }
 
-function Marcador() {
-  const enlace = useRef<HTMLAnchorElement>(null);
-  const [copiado, setCopiado] = useState(false);
-  const url = urlMarcador();
-
-  // React bloquea las URL "javascript:" en href; la ponemos a mano.
-  useEffect(() => {
-    enlace.current?.setAttribute("href", url);
-  }, [url]);
-
-  return (
-    <details className="tarjeta p-5">
-      <summary className="cursor-pointer font-bold">Importar la jornada con un clic</summary>
-      <div className="mt-3 space-y-3 text-sm text-slate-600 dark:text-slate-400">
-        <p>
-          SELAE no deja leer sus datos desde un servidor, pero sí desde tu navegador cuando estás en su web. Este
-          marcador lo aprovecha:
-        </p>
-        <ol className="list-decimal space-y-1 pl-5">
-          <li>
-            <b>En el ordenador:</b> arrastra este botón a la barra de marcadores:{" "}
-            <a
-              ref={enlace}
-              onClick={(e) => e.preventDefault()}
-              className="ml-1 inline-flex rounded-lg bg-marca px-3 py-1 text-xs font-semibold text-white shadow-sm"
-            >
-              📥 Importar a Quini
-            </a>
-          </li>
-          <li>
-            <b>En el móvil:</b> guarda cualquier página como marcador, edítalo, llámalo «Importar a Quini» y pega como
-            URL el código que copia este botón:{" "}
-            <button
-              className="boton-sec ml-1 px-2 py-0.5 text-xs"
-              onClick={async () => {
-                await navigator.clipboard.writeText(url);
-                setCopiado(true);
-              }}
-            >
-              {copiado ? "¡Copiado!" : "Copiar código"}
-            </button>
-          </li>
-          <li>
-            Para importar, abre{" "}
-            <a href="https://www.loteriasyapuestas.es/es/la-quiniela" target="_blank" rel="noreferrer" className="text-marca underline">
-              loteriasyapuestas.es
-            </a>{" "}
-            y pulsa el marcador (en el móvil, escribe «Importar a Quini» en la barra de direcciones y elígelo). Se abrirá
-            Quini con la jornada lista para revisar.
-          </li>
-        </ol>
-      </div>
-    </details>
-  );
-}
-
-function AltaJornada({ inicial }: { inicial: Importacion | null }) {
+function AltaJornada() {
   const navigate = useNavigate();
   const [numero, setNumero] = useState("");
-  const [dia, setDia] = useState(inicial?.fecha ?? proximoDomingo());
-  const [texto, setTexto] = useState(inicial?.texto ?? "");
+  const [dia, setDia] = useState(proximoDomingo());
+  const [texto, setTexto] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
 

@@ -1,6 +1,6 @@
 // deno test supabase/functions/_shared
 import { assertEquals } from "jsr:@std/assert@1";
-import { extraerResultados, plenoDe } from "./parsers.ts";
+import { extraerJornadaJsonLd, extraerResultados, plenoDe } from "./parsers.ts";
 import { parecido } from "./teams.ts";
 
 const quince = (f: (i: number) => Record<string, unknown>) => Array.from({ length: 15 }, (_, i) => f(i));
@@ -70,6 +70,44 @@ Deno.test("SELAE real: jornada a medias (partido 10 sin jugar y pleno pendiente)
   assertEquals(r.signos.size, 13);
   assertEquals(r.signos.has(10), false);
   assertEquals(r.pleno, null);
+});
+
+Deno.test("próxima jornada: JSON-LD de quinielafutbol.info", () => {
+  const evento = (i: number) => ({
+    "@type": "ListItem",
+    position: 15 - i, // desordenados a propósito
+    item: {
+      "@type": "SportsEvent",
+      name: `L${15 - i} vs V${15 - i}`,
+      startDate: "2026-10-03T14:00:00+02:00",
+      homeTeam: { "@type": "SportsTeam", name: i === 0 ? "España (m)" : `L${15 - i}` },
+      awayTeam: { "@type": "SportsTeam", name: `V${15 - i}` },
+    },
+  });
+  const ld = {
+    "@context": "https://schema.org",
+    "@graph": [
+      { "@type": "BreadcrumbList", itemListElement: [{ "@type": "ListItem", position: 1, name: "Inicio" }] },
+      {
+        "@type": "ItemList",
+        name: "Próximos Partidos de La Quiniela - Jornada 11",
+        description: "Calendario de partidos programados para la Jornada 11 de La Quiniela (Domingo, 4 de octubre de 2026)",
+        itemListElement: Array.from({ length: 15 }, (_, i) => evento(i)),
+      },
+    ],
+  };
+  const html = `<html><head><script type="application/ld+json">{ roto </script>
+    <script type="application/ld+json">${JSON.stringify(ld)}</script></head><body></body></html>`;
+  const j = extraerJornadaJsonLd(html)!;
+  assertEquals(j.numero, 11);
+  assertEquals(j.fecha, "2026-10-04");
+  assertEquals(j.partidos.length, 15);
+  assertEquals(j.partidos[0], { local: "L1", visitante: "V1", inicio: "2026-10-03T12:00:00.000Z" });
+  assertEquals(j.partidos[14].local, "España");
+});
+
+Deno.test("próxima jornada: página sin la lista", () => {
+  assertEquals(extraerJornadaJsonLd("<html><body>Mantenimiento</body></html>"), null);
 });
 
 Deno.test("respuesta sin partidos", () => {

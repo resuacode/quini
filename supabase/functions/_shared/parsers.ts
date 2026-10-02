@@ -1,7 +1,7 @@
-// Parser de resultados oficiales de la quiniela. Acepta las respuestas de
-// loteriasapi.com y de SELAE (loteriasyapuestas.es/servicios/fechav3). Ninguna
-// está bien documentada, así que los campos se buscan por nombre con
-// alternativas en vez de asumir una estructura fija:
+// Parsers de la quiniela: resultados oficiales (loteriasapi.com y SELAE) y
+// partidos de la próxima jornada (JSON-LD de quinielafutbol.info, más abajo).
+// Ninguna fuente está bien documentada, así que los campos se buscan por
+// nombre con alternativas en vez de asumir una estructura fija:
 //
 //   loteriasapi: { draw_date, matchday, matches: [{ position, home, away, sign }],
 //                  pleno_15: { home_goals, away_goals } }   (a veces dentro de { data })
@@ -97,6 +97,77 @@ export function plenoDe(v: string): ResultadoOficial["pleno"] {
 /** Quita las marcas de SELAE: "Ceuta (m)" -> "Ceuta". */
 export function limpiarEquipo(nombre: string): string {
   return nombre.replace(/\s*\((m|f)\)\s*$/i, "").trim();
+}
+
+// ------------------------------------------------------------------
+// Próxima jornada: datos estructurados schema.org (JSON-LD) de
+// quinielafutbol.info/proximas-jornadas-de-la-quiniela.html
+//   { "@type": "ItemList", "name": "Próximos Partidos de La Quiniela - Jornada 11",
+//     "description": "… (Domingo, 4 de octubre de 2026)",
+//     "itemListElement": [{ position, item: { "@type": "SportsEvent", startDate,
+//        homeTeam: { name }, awayTeam: { name } } }] }
+// ------------------------------------------------------------------
+
+export interface PartidoProximo {
+  local: string;
+  visitante: string;
+  inicio: string | null;
+}
+
+export interface JornadaProxima {
+  numero: number | null;
+  fecha: string | null;
+  partidos: PartidoProximo[];
+}
+
+const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+
+/** Busca en el HTML la lista JSON-LD con los partidos de la próxima jornada. */
+export function extraerJornadaJsonLd(html: string): JornadaProxima | null {
+  const bloques = [...html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  const listas: Obj[] = [];
+  const visitar = (n: unknown) => {
+    if (Array.isArray(n)) return n.forEach(visitar);
+    if (n && typeof n === "object") {
+      const o = n as Obj;
+      if (o["@type"] === "ItemList" && Array.isArray(o.itemListElement)) listas.push(o);
+      else Object.values(o).forEach(visitar);
+    }
+  };
+  for (const [, contenido] of bloques) {
+    try {
+      visitar(JSON.parse(contenido));
+    } catch {
+      // bloque JSON-LD mal formado: se ignora
+    }
+  }
+
+  for (const lista of listas) {
+    const partidos = (lista.itemListElement as Obj[])
+      .map((e) => ({ pos: Number(e.position), ev: e.item ?? e }))
+      .filter(({ ev }) => ev?.["@type"] === "SportsEvent" && ev.homeTeam?.name && ev.awayTeam?.name)
+      .sort((a, b) => a.pos - b.pos)
+      .map(({ ev }) => {
+        const t = Date.parse(ev.startDate);
+        return {
+          local: limpiarEquipo(String(ev.homeTeam.name)),
+          visitante: limpiarEquipo(String(ev.awayTeam.name)),
+          inicio: Number.isFinite(t) ? new Date(t).toISOString() : null,
+        };
+      });
+    if (partidos.length < 15) continue;
+
+    const texto = `${lista.name ?? ""} ${lista.description ?? ""}`;
+    const numero = Number(texto.match(/jornada\s*(\d{1,2})\b/i)?.[1] ?? NaN);
+    const f = String(lista.description ?? "").toLowerCase().match(/(\d{1,2}) de ([a-zé]+) de (\d{4})/);
+    const mes = f ? MESES.indexOf(f[2]) + 1 : 0;
+    return {
+      numero: Number.isFinite(numero) && numero > 0 ? numero : null,
+      fecha: f && mes ? `${f[3]}-${String(mes).padStart(2, "0")}-${f[1].padStart(2, "0")}` : null,
+      partidos: partidos.slice(0, 15),
+    };
+  }
+  return null;
 }
 
 export function fechaDe(v: unknown): string | null {

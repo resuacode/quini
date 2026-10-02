@@ -9,16 +9,13 @@
 //
 // - Llamada por el cron (cada 10 min).
 // - Llamada desde la web con { "jornada_id": N }: fuerza la consulta oficial.
-import { adminClient, consumirCuota } from "../_shared/supabase.ts";
+import { adminClient } from "../_shared/supabase.ts";
+import { loteriasApi } from "../_shared/loteriasapi.ts";
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { extraerResultados, type ResultadoOficial } from "../_shared/parsers.ts";
 import { selae } from "../_shared/selae.ts";
 import { parecido } from "../_shared/teams.ts";
 
-const BASES_LOTERIAS = Deno.env.get("LOTERIAS_API_BASE")
-  ? [Deno.env.get("LOTERIAS_API_BASE")!]
-  : ["https://api.loteriasapi.com/api/v1", "https://api.loteriasapi.com/v1"];
-const LIMITE_DIARIO = Number(Deno.env.get("LOTERIAS_API_DAILY_LIMIT") ?? 4);
 const INTERVALO_INTENTOS_MS = 3 * 36e5;
 const DIAS_SEGUIMIENTO = 7;
 
@@ -159,26 +156,11 @@ async function procesar(db: Db, j: Jornada, forzada: boolean): Promise<string> {
 
 /** Resultado completo de loteriasapi: primero la última jornada y, si no es esta, por fecha. */
 async function desdeLoteriasApi(db: Db, j: Jornada): Promise<ResultadoOficial | undefined> {
-  if (!Deno.env.get("LOTERIAS_API_KEY")) throw new Error("sin LOTERIAS_API_KEY configurada");
   for (const ruta of ["/results/quiniela/latest", `/results/quiniela/date/${j.fecha}`]) {
     const r = buscar(extraerResultados(await loteriasApi(db, ruta)), j);
     if (r) return r;
   }
   return undefined;
-}
-
-async function loteriasApi(db: Db, ruta: string): Promise<unknown> {
-  let ultimoError = "";
-  for (const base of BASES_LOTERIAS) {
-    if (!(await consumirCuota(db, "loteriasapi", LIMITE_DIARIO))) throw new Error("cuota diaria agotada");
-    const res = await fetch(base + ruta, {
-      headers: { "X-API-Key": Deno.env.get("LOTERIAS_API_KEY")!, Accept: "application/json" },
-    });
-    if (res.ok) return await res.json();
-    ultimoError = `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
-    if (res.status !== 404) break; // solo probamos la otra URL base si esta no existe
-  }
-  throw new Error(ultimoError);
 }
 
 /** SELAE da también resultados parciales (los partidos ya jugados). */
