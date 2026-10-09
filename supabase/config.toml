@@ -424,3 +424,6 @@ verify_jwt = false
 
 [functions.sync-oficial]
 verify_jwt = false
+
+[functions.borrar-cuenta]
+verify_jwt = false

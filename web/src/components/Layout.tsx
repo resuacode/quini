@@ -1,5 +1,4 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { supabase } from "../lib/supabase";
 
 const enlaces = [
   { to: "/", texto: "Jornada", end: true },
@@ -32,12 +31,18 @@ export default function Layout() {
               </NavLink>
             ))}
           </nav>
-          <button
-            onClick={() => supabase.auth.signOut()}
-            className="shrink-0 pl-1 text-sm text-white/80 hover:text-white"
+          <NavLink
+            to="/ajustes"
+            aria-label="Ajustes"
+            className={({ isActive }) =>
+              `shrink-0 rounded-lg px-2 py-1.5 text-sm font-medium transition ${
+                isActive ? "bg-white/20 text-white" : "text-white/80 hover:bg-white/10 hover:text-white"
+              }`
+            }
           >
-            Salir
-          </button>
+            <span aria-hidden="true">⚙</span>
+            <span className="ml-1 hidden sm:inline">Ajustes</span>
+          </NavLink>
         </div>
       </header>
       <main className="mx-auto max-w-4xl px-4 py-6">

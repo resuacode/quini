@@ -3,6 +3,7 @@ import Layout from "./components/Layout";
 import { Aviso, Cargando } from "./components/ui";
 import { SessionProvider, useSession } from "./hooks/useSession";
 import { configurado } from "./lib/supabase";
+import Ajustes from "./pages/Ajustes";
 import Apostar from "./pages/Apostar";
 import Gestion from "./pages/Gestion";
 import JornadaPage from "./pages/Jornada";
@@ -23,6 +24,7 @@ function Rutas() {
         <Route path="temporada" element={<Temporada />} />
         <Route path="gestion" element={<Gestion />} />
         <Route path="gestion/:id" element={<Gestion />} />
+        <Route path="ajustes" element={<Ajustes />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

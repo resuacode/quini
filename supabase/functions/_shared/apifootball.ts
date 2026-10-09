@@ -1,4 +1,5 @@
-const BASE = "https://v3.football.api-sports.io";
+// API_FOOTBALL_BASE solo para pruebas locales contra un servidor simulado
+const BASE = Deno.env.get("API_FOOTBALL_BASE") ?? "https://v3.football.api-sports.io";
 
 export const ESTADOS_FINALES = ["FT", "AET", "PEN"];
 export const ESTADOS_EN_JUEGO = ["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT", "SUSP"];

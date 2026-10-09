@@ -1,6 +1,20 @@
 import { useState, type FormEvent } from "react";
 import { Aviso } from "../components/ui";
 import { supabase } from "../lib/supabase";
+import { AVISO_CUENTA_BORRADA } from "./Ajustes";
+
+/** Mensaje de despedida tras borrar la cuenta (se muestra una sola vez). */
+function leerAvisoCuentaBorrada(): string | null {
+  try {
+    if (sessionStorage.getItem(AVISO_CUENTA_BORRADA)) {
+      sessionStorage.removeItem(AVISO_CUENTA_BORRADA);
+      return "Tu cuenta se ha borrado.";
+    }
+  } catch {
+    // sin almacenamiento disponible
+  }
+  return null;
+}
 
 export default function Login() {
   const [modo, setModo] = useState<"entrar" | "registro">("entrar");
@@ -9,7 +23,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mensaje, setMensaje] = useState<string | null>(null);
+  const [mensaje, setMensaje] = useState<string | null>(leerAvisoCuentaBorrada);
 
   async function enviar(e: FormEvent) {
     e.preventDefault();

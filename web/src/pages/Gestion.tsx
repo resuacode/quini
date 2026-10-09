@@ -37,7 +37,7 @@ function ListaJornadas() {
     setImportando(true);
     setMsg(null);
     try {
-      const r = await invocar<{ jornada_id: number; enlazados?: number; sin_enlazar?: number[]; aviso?: string }>(
+      const r = await invocar<ResumenEnlace & { jornada_id: number }>(
         "import-jornada",
         { action: "importar" },
       );
@@ -529,10 +529,23 @@ function InputGoles({ valor, onChange }: { valor: number | null | undefined; onC
   );
 }
 
-function resumenEnlace(r: { enlazados?: number; sin_enlazar?: number[]; aviso?: string }): string {
+interface ResumenEnlace {
+  enlazados?: number;
+  sin_enlazar?: number[];
+  pendientes?: number[];
+  aviso?: string;
+}
+
+function resumenEnlace(r: ResumenEnlace): string {
   const partes: string[] = [];
   if (r.aviso) partes.push(r.aviso);
   if (r.enlazados != null) partes.push(`${r.enlazados} partido(s) enlazados con API-Football.`);
+  if (r.pendientes?.length) {
+    partes.push(
+      `${r.pendientes.length} partido(s) se enlazarán solos el día antes de jugarse ` +
+        `(el plan gratuito de API-Football solo deja consultar ayer, hoy y mañana).`,
+    );
+  }
   if (r.sin_enlazar?.length) {
     partes.push(`Sin enlazar: ${r.sin_enlazar.join(", ")} (puedes poner el fixture a mano o meter el resultado).`);
   }

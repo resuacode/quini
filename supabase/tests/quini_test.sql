@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 
-select plan(16);
+select plan(19);
 
 -- Usuarios -----------------------------------------------------------
 insert into auth.users (id, email, raw_user_meta_data) values
@@ -96,6 +96,12 @@ select results_eq(
   $$ values ('Ana'::text, 10, 0, 0, 1), ('beto'::text, 11, 1, 0, 0) $$,
   'clasificación de la temporada'
 );
+
+-- Borrar la cuenta (lo que hace la función borrar-cuenta) arrastra perfil y apuestas
+delete from auth.users where id = '00000000-0000-0000-0000-00000000000b';
+select is((select count(*)::int from profiles where id = '00000000-0000-0000-0000-00000000000b'), 0, 'borrar la cuenta borra el perfil');
+select is((select count(*)::int from apuestas where user_id = '00000000-0000-0000-0000-00000000000b'), 0, 'borrar la cuenta borra sus apuestas');
+select is((select count(*)::int from apuestas where user_id = '00000000-0000-0000-0000-00000000000a'), 1, 'las apuestas del otro jugador se mantienen');
 
 select * from finish();
 rollback;
