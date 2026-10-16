@@ -5,13 +5,11 @@
 //
 // SELAE no tiene API pública y bloquea las peticiones desde servidores, así que
 // los partidos se leen de los datos estructurados schema.org (JSON-LD) que
-// publica quinielafutbol.info. Si falta el nº de jornada o la fecha del sorteo,
-// se completan con loteriasapi. Una sola petición por importación.
+// publica quinielafutbol.info. Una sola petición por importación.
 import { adminClient, usuarioDe } from "../_shared/supabase.ts";
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { temporadaApi } from "../_shared/apifootball.ts";
 import { diaMadrid, enlazar, type ResultadoEnlace } from "../_shared/enlazar.ts";
-import { loteriasApiConfigurada, proximoSorteo } from "../_shared/loteriasapi.ts";
 import { extraerJornadaJsonLd } from "../_shared/parsers.ts";
 
 const FUENTE_PROXIMA = "https://www.quinielafutbol.info/proximas-jornadas-de-la-quiniela.html";
@@ -58,20 +56,9 @@ async function importar(db: Db) {
     throw new Error("quinielafutbol.info no tiene ahora mismo los 15 partidos de la próxima jornada. Pega los partidos a mano.");
   }
 
-  // 2. Nº de jornada y fecha del sorteo (si faltan, de loteriasapi)
-  let { numero, fecha } = jornada;
-  if ((!numero || !fecha) && loteriasApiConfigurada()) {
-    try {
-      const s = await proximoSorteo(db);
-      if (s && (!numero || s.numero === numero)) {
-        numero ??= s.numero;
-        fecha ??= s.fecha;
-      }
-    } catch (e) {
-      console.warn("loteriasapi:", msg(e));
-    }
-  }
-  fecha ??= domingoDe(jornada.partidos.find((p) => p.inicio)?.inicio ?? new Date().toISOString());
+  // 2. Nº de jornada y fecha del sorteo (si la página no los trae, se deducen)
+  let { numero } = jornada;
+  const fecha = jornada.fecha ?? domingoDe(jornada.partidos.find((p) => p.inicio)?.inicio ?? new Date().toISOString());
   const temporada = temporadaDe(fecha);
   if (!numero) {
     const { data } = await db.from("jornadas").select("numero").eq("temporada", temporada)

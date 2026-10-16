@@ -1,75 +1,12 @@
 // deno test supabase/functions/_shared
 import { assertEquals } from "jsr:@std/assert@1";
-import { extraerJornadaJsonLd, extraerResultados, plenoDe } from "./parsers.ts";
+import { extraerJornadaJsonLd, extraerResultadosHtml, plenoDe, rutaResultados } from "./parsers.ts";
 import { parecido } from "./teams.ts";
-
-const quince = (f: (i: number) => Record<string, unknown>) => Array.from({ length: 15 }, (_, i) => f(i));
 
 Deno.test("plenoDe", () => {
   assertEquals(plenoDe("2 - 1"), { local: "2", visitante: "1" });
   assertEquals(plenoDe("3-0"), { local: "M", visitante: "0" });
   assertEquals(plenoDe("nada"), null);
-});
-
-Deno.test("loteriasapi: formato de la documentación", () => {
-  const body = {
-    game: "QUINIELA",
-    draw_date: "2026-04-12",
-    matchday: 32,
-    matches: quince((i) => ({ position: i + 1, home: "A" + i, away: "B" + i, sign: ["1", "X", "2"][i % 3] })),
-    pleno_15: { home_goals: 2, away_goals: 4 },
-  };
-  const [r] = extraerResultados(body);
-  assertEquals(r.fecha, "2026-04-12");
-  assertEquals(r.numero, 32);
-  assertEquals(r.signos.size, 14);
-  assertEquals(r.signos.get(2), "X");
-  assertEquals(r.pleno, { local: "2", visitante: "M" });
-  assertEquals(r.equipos.get(1), { local: "A0", visitante: "B0" });
-});
-
-Deno.test("loteriasapi: envuelto en { success, data: [...] }", () => {
-  const body = {
-    success: true,
-    data: [{
-      draw_date: "2026-04-12T00:00:00Z",
-      matchday: "32",
-      matches: quince((i) => ({ position: i + 1, sign: i === 14 ? "M-0" : "1" })),
-    }],
-  };
-  const [r] = extraerResultados(body);
-  assertEquals(r.fecha, "2026-04-12");
-  assertEquals(r.numero, 32);
-  assertEquals(r.pleno, { local: "M", visitante: "0" });
-});
-
-Deno.test("SELAE real: resultado de una jornada jugada", () => {
-  const partidos = quince((i) => ({
-    local: i === 14 ? "Inglaterra (m)" : "Ceuta (m)",
-    visitante: "Otro (f)",
-    signo: i === 14 ? "2-M" : "X",
-    marcador: "1 - 1",
-  }));
-  const [r] = extraerResultados([{ fecha_sorteo: "2026-09-27 00:00:00", jornada: "9", partidos }]);
-  assertEquals(r.fecha, "2026-09-27");
-  assertEquals(r.numero, 9);
-  assertEquals(r.signos.get(1), "X");
-  assertEquals(r.pleno, { local: "2", visitante: "M" });
-  assertEquals(r.equipos.get(15), { local: "Inglaterra", visitante: "Otro" });
-});
-
-Deno.test("SELAE real: jornada a medias (partido 10 sin jugar y pleno pendiente)", () => {
-  const partidos = quince((i) =>
-    i === 9 || i === 14
-      ? { local: "Leganés (m)", visitante: "Castellón (m)", fecha: "2026\\/09\\/28 20:30:00" }
-      : { local: "A (m)", visitante: "B (m)", signo: "1", marcador: "1 - 0" }
-  );
-  const body = [{ fecha_sorteo: "2026-09-27 00:00:00", jornada: "9", partidos }];
-  assertEquals(extraerResultados(body).length, 0, "no está completa");
-  const [r] = extraerResultados(body, 0);
-  assertEquals(r.signos.size, 13);
-  assertEquals(r.signos.has(10), false);
-  assertEquals(r.pleno, null);
 });
 
 Deno.test("próxima jornada: JSON-LD de quinielafutbol.info", () => {
@@ -110,8 +47,53 @@ Deno.test("próxima jornada: página sin la lista", () => {
   assertEquals(extraerJornadaJsonLd("<html><body>Mantenimiento</body></html>"), null);
 });
 
-Deno.test("respuesta sin partidos", () => {
-  assertEquals(extraerResultados({ error: "x" }), []);
+// Fila con la misma forma que la web real (incluido el atributo con JSON escapado)
+const fila = (pos: number, equipos: string, resultado: string, signo: string) => `
+  <tr>
+    <td class="partido-numero">${pos}</td>
+    <td class="equipos" data-partido-modal="{&quot;local&quot;:{&quot;nombre&quot;:&quot;x&quot;}}">
+      <span class="local">${equipos.split(" - ")[0]}</span> - <span>${equipos.split(" - ")[1]}</span></td>
+    <td class="resultado">${resultado}</td>
+    <td class="signo">${signo}</td>
+  </tr>`;
+const pagina = (filas: string) => `<html><body>
+  <h2 class="titulo"><img src="/img/la-quiniela.png" alt="Jornada nº12"> La Quiniela Jornada 12</h2>
+  <p class="datedraw">Fecha jornada: <span>Domingo, 11 de octubre de 2026</span></p>
+  <table class="quiniela-table"><thead><tr><th>P.</th><th>Equipos</th><th>Resultado</th><th>Signo</th></tr></thead>
+  <tbody>${filas}</tbody></table></body></html>`;
+
+Deno.test("resultados: jornada completa", () => {
+  const filas = Array.from({ length: 14 }, (_, i) => fila(i + 1, `Local ${i + 1} - Visitante ${i + 1}`, "2-1", "1")).join("") +
+    fila(15, "Real Madrid - Villarreal", "4-0", "M-0");
+  const r = extraerResultadosHtml(pagina(filas))!;
+  assertEquals(r.numero, 12);
+  assertEquals(r.fecha, "2026-10-11");
+  assertEquals(r.signos.size, 14);
+  assertEquals(r.signos.get(3), "1");
+  assertEquals(r.marcadores.get(3), { local: 2, visitante: 1 });
+  assertEquals(r.pleno, { local: "M", visitante: "0" });
+  assertEquals(r.equipos.get(15), { local: "Real Madrid", visitante: "Villarreal" });
+});
+
+Deno.test("resultados: jornada a medias", () => {
+  const filas = fila(1, "Rayo Vallecano - Athletic Club", "0-0", "X") + fila(2, "Alavés - At. Madrid", "", "") +
+    fila(15, "Real Madrid - Villarreal", "", "");
+  const r = extraerResultadosHtml(pagina(filas))!;
+  assertEquals(r.signos.get(1), "X");
+  assertEquals(r.signos.has(2), false);
+  assertEquals(r.marcadores.has(2), false);
+  assertEquals(r.pleno, null);
+  assertEquals(r.equipos.size, 3);
+});
+
+Deno.test("resultados: página sin tabla", () => {
+  assertEquals(extraerResultadosHtml("<html><body>No encontrada</body></html>"), null);
+});
+
+Deno.test("dirección de la página de resultados", () => {
+  assertEquals(rutaResultados("2026-10-11"), "/resultados/jornada-quiniela-domingo-11-de-octubre-de-2026.html");
+  assertEquals(rutaResultados("2026-10-14"), "/resultados/jornada-quiniela-miercoles-14-de-octubre-de-2026.html");
+  assertEquals(rutaResultados("2026-09-27"), "/resultados/jornada-quiniela-domingo-27-de-septiembre-de-2026.html");
 });
 
 Deno.test("nombres de equipos: quiniela vs API-Football", () => {

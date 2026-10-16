@@ -357,41 +357,21 @@ function EditorJornada({ id }: { id: number }) {
         </label>
         <div className="flex flex-wrap gap-2 sm:col-span-3">
           <button
-            className="boton-sec"
+            className="boton"
             disabled={!!ocupado}
             onClick={() =>
-              accion("enlazar", async () =>
-                resumenEnlace(await invocar("import-jornada", { action: "enlazar", jornada_id: id })),
-              )
-            }
-          >
-            {ocupado === "enlazar" ? "Enlazando…" : "Enlazar con API-Football"}
-          </button>
-          <button
-            className="boton-sec"
-            disabled={!!ocupado}
-            onClick={() =>
-              accion("live", async () => {
-                const r = await invocar<{ omitido?: string; actualizados?: number[] }>("sync-live");
-                return r.omitido ? `Sin cambios: ${r.omitido}.` : `${r.actualizados?.length ?? 0} partido(s) actualizados.`;
-              })
-            }
-          >
-            {ocupado === "live" ? "Actualizando…" : "Actualizar directo"}
-          </button>
-          <button
-            className="boton-sec"
-            disabled={!!ocupado}
-            onClick={() =>
-              accion("oficial", async () => {
+              accion("resultados", async () => {
+                // El marcador en directo es un extra: si falla, seguimos con los resultados
+                await invocar("sync-live").catch(() => undefined);
                 const r = await invocar<{ informe?: Record<string, string>; omitido?: string }>("sync-oficial", {
                   jornada_id: id,
                 });
-                return r.informe?.[id] ?? r.omitido ?? "Hecho.";
+                const texto = r.informe?.[id] ?? r.omitido ?? "Hecho";
+                return texto.charAt(0).toUpperCase() + texto.slice(1) + ".";
               })
             }
           >
-            {ocupado === "oficial" ? "Consultando…" : "Traer resultado oficial"}
+            {ocupado === "resultados" ? "Actualizando…" : "Actualizar resultados"}
           </button>
           <button className="ml-auto text-sm text-red-600 hover:underline" onClick={borrar}>
             Borrar jornada
@@ -492,8 +472,9 @@ function EditorJornada({ id }: { id: number }) {
         </table>
       </div>
       <p className="text-xs text-slate-500">
-        «Fixture» es el id del partido en API-Football (para el directo). «Oficial» pisa al resultado calculado con los
-        goles; se rellena solo con lo que publica SELAE al acabar cada partido, pero puedes corregirlo a mano.
+        Los resultados (goles, signo y pleno) se rellenan solos según acaba cada partido, desde quinielafutbol.info;
+        «Actualizar resultados» los trae en el momento. «Fixture» es el id del partido en API-Football, solo para el
+        marcador en directo. Puedes corregir cualquier dato a mano.
       </p>
 
       {pendientes > 0 && (

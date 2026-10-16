@@ -4,19 +4,18 @@ Web para llevar el pique de aciertos en La Quiniela entre dos (o más) personas 
 
 - Cada uno se registra con **email y contraseña** y mete su columna (14 signos + Pleno al 15).
 - Los aciertos se actualizan **en directo** mientras se juegan los partidos.
-- Al acabar la jornada, esta cuenta para la temporada y se contrasta con el **resultado oficial**.
+- Los resultados de cada partido (goles, signo y pleno) entran solos según acaban, y al completarse la jornada cuenta para la temporada.
 - La página **Temporada** muestra las quinielas ganadas por cada uno (quien más acierta gana, aunque no haya premio), los aciertos totales y la tabla jornada a jornada.
 
-Todo funciona con planes gratuitos: **Supabase** (base de datos, auth, realtime, Edge Functions y cron), **GitHub Pages** (frontend), **API-Football** (directo) y **loteriasapi.com** (resultado oficial).
+Todo funciona con planes gratuitos: **Supabase** (base de datos, auth, realtime, Edge Functions y cron), **GitHub Pages** (frontend) y **API-Football** (marcador en directo). Las jornadas y sus resultados salen de [quinielafutbol.info](https://www.quinielafutbol.info), sin clave ni cuota.
 
 ## Cómo funciona
 
 | Qué | De dónde sale |
 | --- | --- |
-| Los 15 partidos de la próxima jornada | Botón **Importar próxima jornada**: lee los datos estructurados schema.org (JSON-LD) de [quinielafutbol.info](https://www.quinielafutbol.info/proximas-jornadas-de-la-quiniela.html), con una sola petición por importación. Si falta el número de jornada o la fecha del sorteo, se completan con loteriasapi. También se pueden pegar a mano: el formulario reconoce número de jornada, número de partido, fecha, hora y marcas `(m)`/`(f)`, y enseña una vista previa. |
+| Los 15 partidos de la próxima jornada | Botón **Importar próxima jornada**: lee los datos estructurados schema.org (JSON-LD) de [quinielafutbol.info](https://www.quinielafutbol.info/proximas-jornadas-de-la-quiniela.html), con una sola petición por importación. También se pueden pegar a mano: el formulario reconoce número de jornada, número de partido, fecha, hora y marcas `(m)`/`(f)`, y enseña una vista previa. |
 | Marcadores en directo | [API-Football](https://www.api-football.com/) (plan gratis: 100 peticiones/día y solo partidos de ayer, hoy y mañana). Los partidos se enlazan por hora de inicio y nombre de los equipos, así que valen también Segunda, selecciones o Liga F. Los que se juegan más tarde se enlazan solos el día antes. |
-| Cierre de la jornada | Automático cuando API-Football da los 15 partidos por terminados. |
-| Resultado oficial (aplazados, partidos sin enlazar) | [loteriasapi.com](https://loteriasapi.com), consultado pocas veces por jornada. Como intento extra se prueba SELAE, aunque bloquea las peticiones desde Supabase. |
+| Resultados (goles, signo y pleno) | Página de resultados de cada jornada en quinielafutbol.info, que se rellena según acaban los partidos. Sirve también para los partidos sin enlazar, los aplazados y las jornadas antiguas. Con los 15 resultados, la jornada se cierra. |
 
 Las Edge Functions se ejecutan solas con `pg_cron`:
 
@@ -24,12 +23,12 @@ Las Edge Functions se ejecutan solas con `pg_cron`:
   - Enlaza con API-Football los partidos que aún no lo están, cuando su día entra en la ventana del plan gratuito (ayer, hoy y mañana). Como mucho, un intento por jornada cada 3 horas.
   - Actualiza los partidos en juego o a punto de empezar, todos en una sola petición.
   - Reparte la cuota diaria (90 por defecto, en la tabla `api_usage`): si no da para consultar cada 5 minutos hasta el final del último partido del día, alarga el intervalo para que el directo llegue hasta el final.
-- **`sync-oficial`**, cada 10 minutos:
-  - Cierra la jornada en cuanto API-Football da los 15 partidos por terminados.
-  - Cuando la jornada ha acabado, pide el resultado oficial a loteriasapi, como mucho una vez cada 3 horas y con un tope diario de 4 peticiones. Solo sigue intentándolo durante la semana siguiente a la jornada.
-  - Antes de aplicar los signos, comprueba que los equipos coinciden con los de la jornada.
+- **`sync-oficial`**, cada 10 minutos (también la usa el botón *Actualizar resultados*):
+  - Si hay partidos que ya deberían haber acabado y no tienen resultado, lee la página de resultados de la jornada y aplica goles, signos y pleno. Como mucho, una consulta cada 10 minutos por jornada, y solo durante la semana siguiente a la jornada.
+  - Con los 15 resultados, marca la jornada como `finalizada`. También la cierra si API-Football da los 15 partidos por terminados.
+  - Antes de aplicar nada, comprueba que los equipos coinciden con los de la jornada.
 - **`borrar-cuenta`**: la usa *Ajustes → Borrar mi cuenta*. Exige escribir `BORRAR`, comprueba la sesión y borra el usuario; su perfil y sus apuestas se borran en cascada.
-- **`import-jornada`**: importa la próxima jornada (botón *Importar próxima jornada*) y enlaza sus partidos con API-Football. El enlace también se lanza al crear una jornada a mano y con el botón *Enlazar con API-Football*.
+- **`import-jornada`**: importa la próxima jornada (botón *Importar próxima jornada*) y enlaza sus partidos con API-Football. El enlace también se lanza al crear una jornada a mano.
 
 Las apuestas se pueden cambiar hasta el inicio del primer partido; lo garantiza RLS en la base de datos, no solo la web. El Pleno al 15 cuenta como un acierto más, así que el máximo son 15. Si empatáis a aciertos, la jornada cuenta como empate.
 
@@ -55,15 +54,12 @@ supabase/tests/           tests SQL (pgTAP)
    npx supabase functions deploy
    ```
 
-3. Configura las claves de las APIs. Las dos son opcionales:
-   - Sin API-Football no hay directo, y los resultados se meten a mano en Gestión.
-   - Sin loteriasapi, la jornada se cierra igual con los resultados de API-Football, pero sin confirmación oficial.
+3. Configura la clave de API-Football. Es opcional: sin ella no hay marcador minuto a minuto, pero los resultados llegan igual al acabar cada partido.
 
    ```bash
    npx supabase secrets set API_FOOTBALL_KEY=<clave de dashboard.api-football.com>
-   npx supabase secrets set LOTERIAS_API_KEY=<clave de loteriasapi.com>
-   # Opcional: topes diarios (por defecto 90 y 4)
-   npx supabase secrets set API_FOOTBALL_DAILY_LIMIT=90 LOTERIAS_API_DAILY_LIMIT=4
+   # Opcional: tope diario de peticiones (por defecto 90; el plan gratis permite 100)
+   npx supabase secrets set API_FOOTBALL_DAILY_LIMIT=90
    # Solo con un plan de pago de API-Football: enlazar partidos de cualquier fecha
    npx supabase secrets set API_FOOTBALL_SIN_LIMITE_FECHAS=true
    ```
@@ -96,10 +92,10 @@ supabase/tests/           tests SQL (pgTAP)
 
 ## Uso
 
-1. Cada semana, en **Gestión**, pulsa **Importar próxima jornada**. Se crea con sus 15 partidos y horarios y se enlaza sola con API-Football. Si la importación falla, usa **Pegar a mano**: revisa la vista previa y pulsa *Crear jornada*. Si alguno no se enlaza, puedes poner su *fixture* a mano o meter el resultado directamente.
+1. Cada semana, en **Gestión**, pulsa **Importar próxima jornada**. Se crea con sus 15 partidos y horarios y se enlaza sola con API-Football. Si la importación falla, usa **Pegar a mano**: revisa la vista previa y pulsa *Crear jornada*. Si alguno no se enlaza, solo pierdes su marcador minuto a minuto: el resultado llega igual al acabar.
 2. Cada uno entra en **Jornada → Hacer mi apuesta**.
 3. Durante la jornada, la página se actualiza sola. Los aciertos aparecen en verde claro mientras son provisionales y en verde sólido cuando el partido termina.
-4. Cuando acaban los 15 partidos, la jornada se cierra y suma en **Temporada**. Después se contrasta con el resultado oficial; puedes forzarlo con *Traer resultado oficial* o corregir cualquier dato en Gestión.
+4. Los resultados entran solos según acaban los partidos. Con los 15, la jornada se cierra y suma en **Temporada**. Si no quieres esperar al cron, pulsa *Gestión → la jornada → Actualizar resultados*. También puedes corregir cualquier dato a mano.
 5. En **Ajustes** (⚙) cada uno puede cambiar su nombre, cerrar sesión o borrar su cuenta. Borrarla elimina también sus apuestas, y las jornadas en las que jugó dejan de contar para el duelo.
 
 ## Desarrollo local
@@ -117,12 +113,11 @@ Tests:
 
 ```bash
 npx supabase test db                      # SQL: aciertos, pleno, clasificación y RLS
-npx deno test supabase/functions/_shared  # parser de resultados y cruce de equipos
+npx deno test supabase/functions/_shared  # parsers de quinielafutbol.info y cruce de equipos
 cd web && npm run build                   # typecheck + build
 ```
 
 ## Limitaciones conocidas
 
-- No hay ninguna API pública con los partidos de la próxima quiniela. SELAE (loteriasyapuestas.es) bloquea las peticiones desde servidores, y loteriasapi solo da la fecha y el número de jornada. Por eso la importación depende de quinielafutbol.info, una web de terceros: si cambia su formato o deja de publicar la jornada, la app lo avisa y queda el pegado manual.
-- La documentación de loteriasapi.com no concreta el formato de respuesta de la quiniela ni la cuota gratuita, así que el parser acepta varias formas y las consultas están muy espaciadas.
-- El plan gratuito de API-Football solo deja consultar partidos de ayer, hoy y mañana. Por eso, al importar una jornada se enlazan solo los partidos más cercanos y el resto se enlazan solos después. Además, con 100 peticiones al día, en los días con muchos partidos el directo se actualiza con menos frecuencia (el intervalo se calcula solo).
+- No hay ninguna API pública con las jornadas de la quiniela: SELAE (loteriasyapuestas.es) bloquea las peticiones desde servidores, y las APIs de fútbol no saben qué 15 partidos entran. Por eso las jornadas y los resultados dependen de quinielafutbol.info, una web de terceros. Si cambia su formato o deja de publicarlas, la app lo avisa y quedan el pegado manual y la edición de resultados en Gestión.
+- El plan gratuito de API-Football solo deja consultar partidos de ayer, hoy y mañana. Por eso, al importar una jornada se enlazan solo los partidos más cercanos y el resto se enlazan solos después. Esto solo afecta al marcador minuto a minuto, no a los resultados. Además, con 100 peticiones al día, en los días con muchos partidos el directo se actualiza con menos frecuencia (el intervalo se calcula solo).

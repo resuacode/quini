@@ -1,31 +1,36 @@
-// Cierra las jornadas y aplica su resultado oficial.
+// Trae los resultados de las jornadas (signos, marcadores y pleno) de la página
+// de resultados de quinielafutbol.info y cierra la jornada cuando están los 15.
 //
-// 1. Cierre automático: cuando API-Football da los 15 partidos por terminados,
-//    la jornada pasa a "finalizada" y ya cuenta para la temporada.
-// 2. Confirmación oficial: cuando la jornada ha acabado, se consulta
-//    loteriasapi.com (y, como intento extra, SELAE) para aplicar los signos
-//    oficiales (aplazados, partidos sin enlazar...) y marcarla como oficial.
-//    Las consultas se espacian (INTERVALO_INTENTOS) para no gastar cuota.
+// - Cron (cada 10 min): solo consulta la página si hay partidos que ya deberían
+//   haber acabado y aún no tienen resultado, como mucho una vez cada 10 minutos
+//   por jornada. Así los resultados van entrando según acaban los partidos.
+// - Desde la web con { "jornada_id": N } (botón "Actualizar resultados"): siempre.
 //
-// - Llamada por el cron (cada 10 min).
-// - Llamada desde la web con { "jornada_id": N }: fuerza la consulta oficial.
+// Además, si API-Football ya ha dado los 15 partidos por terminados, la jornada se
+// cierra aunque la página todavía no tenga los resultados.
 import { adminClient } from "../_shared/supabase.ts";
-import { loteriasApi } from "../_shared/loteriasapi.ts";
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { extraerResultados, type ResultadoOficial } from "../_shared/parsers.ts";
-import { selae } from "../_shared/selae.ts";
+import { extraerResultadosHtml, type ResultadosJornada, rutaResultados } from "../_shared/parsers.ts";
 import { parecido } from "../_shared/teams.ts";
 
-const INTERVALO_INTENTOS_MS = 3 * 36e5;
+const WEB = "https://www.quinielafutbol.info";
+const UA = "Quini/1.0 (app personal de quinielas)";
 const DIAS_SEGUIMIENTO = 7;
+const DURACION_PARTIDO_MS = 105 * 60 * 1000;
+const INTERVALO_MS = 9 * 60 * 1000;
 
 interface Partido {
+  id: number;
   posicion: number;
   local: string;
   visitante: string;
   inicio: string | null;
   terminado: boolean;
   signo_oficial: string | null;
+  pleno_oficial_local: string | null;
+  pleno_oficial_visitante: string | null;
+  goles_local: number | null;
+  goles_visitante: number | null;
 }
 
 interface Jornada {
@@ -33,6 +38,7 @@ interface Jornada {
   numero: number;
   fecha: string;
   estado: string;
+  oficial: boolean;
   ultimo_intento_oficial: string | null;
   partidos: Partido[];
 }
@@ -68,7 +74,8 @@ Deno.serve(async (req) => {
 
 async function jornadasPendientes(db: Db, forzada?: number): Promise<Jornada[]> {
   let q = db.from("jornadas").select(
-    "id, numero, fecha, estado, ultimo_intento_oficial, partidos(posicion, local, visitante, inicio, terminado, signo_oficial)",
+    "id, numero, fecha, estado, oficial, ultimo_intento_oficial, " +
+      "partidos(id, posicion, local, visitante, inicio, terminado, signo_oficial, pleno_oficial_local, pleno_oficial_visitante, goles_local, goles_visitante)",
   );
   if (forzada) {
     q = q.eq("id", forzada);
@@ -83,119 +90,100 @@ async function jornadasPendientes(db: Db, forzada?: number): Promise<Jornada[]> 
 
 async function procesar(db: Db, j: Jornada, forzada: boolean): Promise<string> {
   const partes: string[] = [];
-  const todosTerminados = j.partidos.length === 15 && j.partidos.every((p) => p.terminado);
+  const ahora = Date.now();
 
-  // 1. Cierre automático con los resultados de API-Football
-  if (todosTerminados && j.estado !== "finalizada") {
+  // 1. Cierre con los datos de API-Football (si todos los partidos han terminado)
+  if (j.partidos.length === 15 && j.partidos.every((p) => p.terminado) && j.estado !== "finalizada") {
     await actualizarJornada(db, j.id, { estado: "finalizada" });
-    j.estado = "finalizada";
-    partes.push("finalizada con los resultados de API-Football");
+    partes.push("finalizada (todos los partidos terminados)");
   }
 
-  // 2. Confirmación oficial, solo cuando la jornada ha acabado y espaciando intentos
-  const finEstimado = Math.max(
-    new Date(j.fecha + "T22:00:00Z").getTime(),
-    ...j.partidos.filter((p) => p.inicio).map((p) => new Date(p.inicio!).getTime() + 2 * 36e5),
-  );
-  const acabada = todosTerminados || Date.now() > finEstimado;
+  // 2. ¿Hay resultados que ya deberían estar y no están?
+  const faltan = j.partidos.filter((p) => {
+    const sinResultado = p.posicion === 15 ? !p.pleno_oficial_local : !p.signo_oficial;
+    const acabado = p.inicio
+      ? new Date(p.inicio).getTime() + DURACION_PARTIDO_MS < ahora
+      : ahora > Date.parse(j.fecha + "T22:00:00Z");
+    return sinResultado && acabado;
+  });
   const ultimo = j.ultimo_intento_oficial ? new Date(j.ultimo_intento_oficial).getTime() : 0;
-  if (!forzada && !acabada) return partes.join(" · ") || "esperando a que acabe la jornada";
-  if (!forzada && Date.now() - ultimo < INTERVALO_INTENTOS_MS) {
-    const min = Math.ceil((ultimo + INTERVALO_INTENTOS_MS - Date.now()) / 60000);
-    partes.push(`próximo intento de resultado oficial en ${min} min`);
+  if (!forzada && (faltan.length === 0 || ahora - ultimo < INTERVALO_MS)) {
+    return partes.join(" · ") || "nada que actualizar";
+  }
+  await actualizarJornada(db, j.id, { ultimo_intento_oficial: new Date(ahora).toISOString() });
+
+  // 3. Página de resultados de la jornada
+  const r = await leerResultados(j.fecha);
+  if (!r) {
+    partes.push("quinielafutbol.info todavía no tiene los resultados de esta jornada");
     return partes.join(" · ");
   }
 
-  await actualizarJornada(db, j.id, { ultimo_intento_oficial: new Date().toISOString() });
-  const avisos: string[] = [];
-  let r: ResultadoOficial | undefined;
-  let fuente = "";
-
-  try {
-    r = await desdeLoteriasApi(db, j);
-    fuente = "loteriasapi";
-  } catch (e) {
-    avisos.push(`loteriasapi: ${msg(e)}`);
-  }
-  if (!r) {
-    try {
-      r = await desdeSelae(j);
-      fuente = "SELAE";
-    } catch (e) {
-      avisos.push(`SELAE: ${msg(e)}`);
-    }
-  }
-
-  if (!r) {
-    partes.push(["resultado oficial aún no disponible", ...avisos].join(" · "));
-    return partes.join(" · ");
-  }
-
+  // Seguridad: los resultados se aplican por posición, así que tienen que ser los mismos partidos
   const coinciden = j.partidos.filter((p) => {
-    const e = r!.equipos.get(p.posicion);
+    const e = r.equipos.get(p.posicion);
     return e && (parecido(p.local, e.local) >= 0.6 || parecido(p.visitante, e.visitante) >= 0.6);
   }).length;
-  if (r.equipos.size && coinciden < 12) {
-    partes.push(`los partidos de ${fuente} no coinciden con los de la jornada (${coinciden}/15); revisa la fecha del sorteo`);
+  if (coinciden < 12) {
+    partes.push(`los partidos de la página no coinciden con los de la jornada (${coinciden}/15); revisa la fecha del sorteo`);
     return partes.join(" · ");
   }
 
-  await aplicar(db, j, r);
+  const nuevos = await aplicar(db, j, r);
+  const disponibles = r.signos.size + (r.pleno ? 1 : 0);
   if (r.signos.size >= 14 && r.pleno) {
     await actualizarJornada(db, j.id, { oficial: true, estado: "finalizada" });
-    partes.push(`resultado oficial aplicado (${fuente})`);
+    partes.push("resultados completos: jornada finalizada");
   } else {
-    partes.push(`${r.signos.size + (r.pleno ? 1 : 0)}/15 resultados oficiales aplicados (${fuente})`);
+    partes.push(`${disponibles}/15 resultados`);
   }
+  if (nuevos) partes.push(`${nuevos} actualizado(s)`);
   return partes.join(" · ");
 }
 
-// ------------------------------------------------------------------
-// Fuentes
-// ------------------------------------------------------------------
+async function leerResultados(fecha: string): Promise<ResultadosJornada | null> {
+  const pedir = (ruta: string) => fetch(WEB + ruta, { headers: { "User-Agent": UA, Accept: "text/html" } });
 
-/** Resultado completo de loteriasapi: primero la última jornada y, si no es esta, por fecha. */
-async function desdeLoteriasApi(db: Db, j: Jornada): Promise<ResultadoOficial | undefined> {
-  for (const ruta of ["/results/quiniela/latest", `/results/quiniela/date/${j.fecha}`]) {
-    const r = buscar(extraerResultados(await loteriasApi(db, ruta)), j);
-    if (r) return r;
+  let res = await pedir(rutaResultados(fecha));
+  if (res.status === 404) {
+    // Por si cambia el nombre de la página: se busca en el índice de jornadas
+    await res.body?.cancel();
+    const indice = await pedir("/resultados/jornadas-de-la-quiniela.html");
+    if (!indice.ok) throw new Error(`índice de resultados: HTTP ${indice.status}`);
+    const sufijo = rutaResultados(fecha).replace(/^.*jornada-quiniela-[a-z]+/, "");
+    const enlace = (await indice.text()).match(new RegExp(`href="(/resultados/[^"]*${sufijo.replace(/[.]/g, "\\.")})"`))?.[1];
+    if (!enlace) return null;
+    res = await pedir(enlace);
   }
-  return undefined;
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`quinielafutbol.info: HTTP ${res.status}`);
+  const r = extraerResultadosHtml(await res.text());
+  return r && (!r.fecha || r.fecha === fecha) ? r : null;
 }
 
-/** SELAE da también resultados parciales (los partidos ya jugados). */
-async function desdeSelae(j: Jornada): Promise<ResultadoOficial | undefined> {
-  const detalle = await selae(`fechav3?game_id=LAQU&fecha_sorteo=${j.fecha.replaceAll("-", "")}`);
-  return extraerResultados(detalle, 0).find((x) => x.fecha === j.fecha);
-}
-
-/** Resultado completo (14 signos + pleno) de la jornada: misma fecha, o mismo nº con ±1 día. */
-function buscar(resultados: ResultadoOficial[], j: Jornada): ResultadoOficial | undefined {
-  const completos = resultados.filter((r) => r.signos.size >= 14 && r.pleno);
-  const fechaJ = new Date(j.fecha + "T12:00:00Z").getTime();
-  const cerca = (r: ResultadoOficial) =>
-    r.fecha != null && Math.abs(new Date(r.fecha + "T12:00:00Z").getTime() - fechaJ) <= 864e5;
-  return completos.find((r) => r.fecha === j.fecha) ??
-    completos.find((r) => r.numero === j.numero && (r.fecha == null || cerca(r)));
-}
-
-// ------------------------------------------------------------------
-// Escritura
-// ------------------------------------------------------------------
-
-async function aplicar(db: Db, j: Jornada, r: ResultadoOficial) {
-  for (const [posicion, signo] of r.signos) {
-    if (j.partidos.find((p) => p.posicion === posicion)?.signo_oficial === signo) continue;
-    const { error } = await db.from("partidos").update({ signo_oficial: signo })
-      .eq("jornada_id", j.id).eq("posicion", posicion);
+/** Aplica signos, marcadores y pleno que hayan cambiado. Devuelve cuántos partidos se han tocado. */
+async function aplicar(db: Db, j: Jornada, r: ResultadosJornada): Promise<number> {
+  let nuevos = 0;
+  for (const p of j.partidos) {
+    const cambios: Record<string, unknown> = {};
+    const m = r.marcadores.get(p.posicion);
+    if (m && (m.local !== p.goles_local || m.visitante !== p.goles_visitante)) {
+      Object.assign(cambios, { goles_local: m.local, goles_visitante: m.visitante, estado: "FT" });
+    }
+    const signo = r.signos.get(p.posicion);
+    if (p.posicion <= 14 && signo && signo !== p.signo_oficial) cambios.signo_oficial = signo;
+    if (
+      p.posicion === 15 && r.pleno &&
+      (r.pleno.local !== p.pleno_oficial_local || r.pleno.visitante !== p.pleno_oficial_visitante)
+    ) {
+      Object.assign(cambios, { pleno_oficial_local: r.pleno.local, pleno_oficial_visitante: r.pleno.visitante });
+    }
+    if (Object.keys(cambios).length === 0) continue;
+    const { error } = await db.from("partidos").update(cambios).eq("id", p.id);
     if (error) throw error;
+    nuevos++;
   }
-  if (r.pleno) {
-    const { error } = await db.from("partidos")
-      .update({ pleno_oficial_local: r.pleno.local, pleno_oficial_visitante: r.pleno.visitante })
-      .eq("jornada_id", j.id).eq("posicion", 15);
-    if (error) throw error;
-  }
+  return nuevos;
 }
 
 async function actualizarJornada(db: Db, id: number, cambios: Record<string, unknown>) {
