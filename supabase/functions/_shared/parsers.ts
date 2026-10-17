@@ -30,9 +30,13 @@ export function plenoDe(v: string): { local: Pleno; visitante: Pleno } | null {
   return local && visitante ? { local, visitante } : null;
 }
 
-/** Quita las marcas de partido masculino/femenino: "Ceuta (m)" -> "Ceuta". */
+/**
+ * Normaliza la marca de masculino/femenino de la quiniela: "(M)" se quita (es lo
+ * normal) y "(F)" se conserva, porque en Liga F los nombres coinciden con los
+ * de los equipos masculinos: "Ceuta (m)" -> "Ceuta", "Eibar (f)" -> "Eibar (F)".
+ */
 export function limpiarEquipo(nombre: string): string {
-  return nombre.replace(/\s*\((m|f)\)\s*$/i, "").trim();
+  return nombre.replace(/\s*\(m\)\s*$/i, "").replace(/\s*\(f\)\s*$/i, " (F)").trim();
 }
 
 function texto(html: string): string {

@@ -11,6 +11,7 @@
 import { adminClient } from "../_shared/supabase.ts";
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { extraerResultadosHtml, type ResultadosJornada, rutaResultados } from "../_shared/parsers.ts";
+import { corregirNombres } from "../_shared/nombres.ts";
 import { parecido } from "../_shared/teams.ts";
 
 const WEB = "https://www.quinielafutbol.info";
@@ -129,6 +130,8 @@ async function procesar(db: Db, j: Jornada, forzada: boolean): Promise<string> {
     return partes.join(" · ");
   }
 
+  const renombrados = await corregirNombres(db, j.partidos, r.equipos);
+  if (renombrados) partes.push(`${renombrados} nombre(s) actualizados`);
   const nuevos = await aplicar(db, j, r);
   const disponibles = r.signos.size + (r.pleno ? 1 : 0);
   if (r.signos.size >= 14 && r.pleno) {

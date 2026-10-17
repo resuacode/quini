@@ -6,6 +6,7 @@ export const ESTADOS_EN_JUEGO = ["1H", "HT", "2H", "ET", "BT", "P", "LIVE", "INT
 
 export interface Fixture {
   fixture: { id: number; date: string; status: { short: string } };
+  league?: { name?: string };
   teams: { home: { name: string }; away: { name: string } };
   goals: { home: number | null; away: number | null };
   score: { fulltime: { home: number | null; away: number | null } };

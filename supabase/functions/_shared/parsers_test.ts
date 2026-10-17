@@ -1,7 +1,8 @@
 // deno test supabase/functions/_shared
 import { assertEquals } from "jsr:@std/assert@1";
 import { extraerJornadaJsonLd, extraerResultadosHtml, plenoDe, rutaResultados } from "./parsers.ts";
-import { parecido } from "./teams.ts";
+import { esFemenino, parecido } from "./teams.ts";
+import { fixtureFemenino } from "./enlazar.ts";
 
 Deno.test("plenoDe", () => {
   assertEquals(plenoDe("2 - 1"), { local: "2", visitante: "1" });
@@ -17,8 +18,8 @@ Deno.test("próxima jornada: JSON-LD de quinielafutbol.info", () => {
       "@type": "SportsEvent",
       name: `L${15 - i} vs V${15 - i}`,
       startDate: "2026-10-03T14:00:00+02:00",
-      homeTeam: { "@type": "SportsTeam", name: i === 0 ? "España (m)" : `L${15 - i}` },
-      awayTeam: { "@type": "SportsTeam", name: `V${15 - i}` },
+      homeTeam: { "@type": "SportsTeam", name: i === 0 ? "España (m)" : i === 1 ? "Athletic Club (F)" : `L${15 - i}` },
+      awayTeam: { "@type": "SportsTeam", name: i === 1 ? "Valencia (f)" : `V${15 - i}` },
     },
   });
   const ld = {
@@ -40,7 +41,8 @@ Deno.test("próxima jornada: JSON-LD de quinielafutbol.info", () => {
   assertEquals(j.fecha, "2026-10-04");
   assertEquals(j.partidos.length, 15);
   assertEquals(j.partidos[0], { local: "L1", visitante: "V1", inicio: "2026-10-03T12:00:00.000Z" });
-  assertEquals(j.partidos[14].local, "España");
+  assertEquals(j.partidos[14].local, "España", "(M) se quita");
+  assertEquals(j.partidos[13], { local: "Athletic Club (F)", visitante: "Valencia (F)", inicio: "2026-10-03T12:00:00.000Z" }, "(F) se conserva");
 });
 
 Deno.test("próxima jornada: página sin la lista", () => {
@@ -76,7 +78,7 @@ Deno.test("resultados: jornada completa", () => {
 });
 
 Deno.test("resultados: jornada a medias", () => {
-  const filas = fila(1, "Rayo Vallecano - Athletic Club", "0-0", "X") + fila(2, "Alavés - At. Madrid", "", "") +
+  const filas = fila(1, "Rayo Vallecano - Athletic Club", "0-0", "X") + fila(2, "Barcelona (F) - Real Madrid (F)", "", "") +
     fila(15, "Real Madrid - Villarreal", "", "");
   const r = extraerResultadosHtml(pagina(filas))!;
   assertEquals(r.signos.get(1), "X");
@@ -84,6 +86,7 @@ Deno.test("resultados: jornada a medias", () => {
   assertEquals(r.marcadores.has(2), false);
   assertEquals(r.pleno, null);
   assertEquals(r.equipos.size, 3);
+  assertEquals(r.equipos.get(2), { local: "Barcelona (F)", visitante: "Real Madrid (F)" });
 });
 
 Deno.test("resultados: página sin tabla", () => {
@@ -112,5 +115,31 @@ Deno.test("nombres de equipos: quiniela vs API-Football", () => {
   assertEquals(parecido("Español", "Espanyol"), 1);
   assertEquals(parecido("República Checa", "Czech Republic"), 1);
   assertEquals(parecido("Rep. De Irlanda", "Republic of Ireland"), 1);
-  assertEquals(parecido("Deportivo", "Deportivo La Coruna W"), 0.8);
+  // La "W" de los equipos femeninos no cuenta al comparar clubes (el género se mira aparte)
+  assertEquals(parecido("Deportivo", "Deportivo La Coruna W"), 1);
+});
+
+Deno.test("Liga F: misma comparación de club, distinto género", () => {
+  // Para comparar clubes la marca no cuenta…
+  assertEquals(parecido("Barcelona (F)", "Barcelona"), 1);
+  assertEquals(parecido("Real Madrid (F)", "Real Madrid W"), 1);
+  assertEquals(parecido("At. Madrid (F)", "Atletico Madrid W"), 1);
+  // …pero el género se detecta aparte
+  assertEquals(esFemenino("Athletic Club (F)"), true);
+  assertEquals(esFemenino("Athletic Club"), false);
+  assertEquals(esFemenino("Barcelona W"), true);
+  assertEquals(esFemenino("Wolves"), false);
+});
+
+Deno.test("Liga F: partido femenino en API-Football", () => {
+  const fx = (home: string, away: string, liga: string) => ({
+    fixture: { id: 1, date: "", status: { short: "NS" } },
+    league: { name: liga },
+    teams: { home: { name: home }, away: { name: away } },
+    goals: { home: null, away: null },
+    score: { fulltime: { home: null, away: null } },
+  });
+  assertEquals(fixtureFemenino(fx("Barcelona W", "Real Madrid W", "Liga F")), true);
+  assertEquals(fixtureFemenino(fx("Barcelona", "Real Madrid", "Liga F")), true, "por la competición");
+  assertEquals(fixtureFemenino(fx("Barcelona", "Real Madrid", "La Liga")), false);
 });

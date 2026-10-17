@@ -30,6 +30,8 @@ Las Edge Functions se ejecutan solas con `pg_cron`:
 - **`borrar-cuenta`**: la usa *Ajustes → Borrar mi cuenta*. Exige escribir `BORRAR`, comprueba la sesión y borra el usuario; su perfil y sus apuestas se borran en cascada.
 - **`import-jornada`**: importa la próxima jornada (botón *Importar próxima jornada*) y enlaza sus partidos con API-Football. El enlace también se lanza al crear una jornada a mano.
 
+Los partidos de Liga F llevan la marca **(F)** ("Real Madrid (F)"), porque los nombres de los clubes coinciden con los masculinos; "(M)" no se muestra. Al enlazar con API-Football, un partido femenino solo se empareja con partidos femeninos y al revés. Las jornadas creadas sin la marca se corrigen solas al reimportarlas o al actualizar sus resultados.
+
 Las apuestas se pueden cambiar hasta el inicio del primer partido; lo garantiza RLS en la base de datos, no solo la web. El Pleno al 15 cuenta como un acierto más, así que el máximo son 15. Si empatáis a aciertos, la jornada cuenta como empate.
 
 ```
@@ -113,7 +115,7 @@ Tests:
 
 ```bash
 npx supabase test db                      # SQL: aciertos, pleno, clasificación y RLS
-npx deno test supabase/functions/_shared  # parsers de quinielafutbol.info y cruce de equipos
+npx deno test --allow-env supabase/functions/_shared  # parsers de quinielafutbol.info y cruce de equipos
 cd web && npm run build                   # typecheck + build
 ```
 

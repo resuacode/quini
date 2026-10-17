@@ -117,7 +117,8 @@ const RUIDO = /^(pleno( al)? 15|partidos?|jornada.*|1\s*x\s*2|[1x2 ]+|p15|local|
  * Reconoce los 15 partidos pegados desde cualquier sitio (p. ej. la web de
  * loteriasyapuestas.es). Admite "1. Local - Visitante 29/09 20:45", fechas u
  * horas en una línea aparte que valen para los partidos siguientes, marcas
- * "(m)"/"(f)" y, como último recurso, un equipo por línea.
+ * "(m)" (se quita) y "(f)" (se conserva como "(F)") y, como último recurso,
+ * un equipo por línea.
  * `fechaSorteo` (YYYY-MM-DD) sirve para deducir el año de fechas sin año.
  */
 export function parsearJornada(texto: string, fechaSorteo: string): JornadaPegada {
@@ -144,7 +145,8 @@ export function parsearJornada(texto: string, fechaSorteo: string): JornadaPegad
     }
     l = l
       .replace(DIAS_SEMANA, " ")
-      .replace(/\((m|f)\)/gi, " ")
+      .replace(/\s*\(m\)/gi, " ") // masculino: lo normal, no se marca
+      .replace(/\s*\(f\)/gi, " (F)") // femenino: se conserva (Liga F repite nombres)
       .replace(/^\s*(p?\d{1,2})\s*[.)ºª:-]?\s+/i, "") // nº de partido
       .replace(/\s+/g, " ")
       .replace(/^[\s-–]+|[\s-–]+$/g, "")

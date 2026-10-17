@@ -11,7 +11,7 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { apiFootball, apiFootballConfigurada, type Fixture } from "./apifootball.ts";
 import { consumirCuota } from "./supabase.ts";
-import { parecido } from "./teams.ts";
+import { esFemenino, parecido } from "./teams.ts";
 
 const LIMITE_DIARIO = Number(Deno.env.get("API_FOOTBALL_DAILY_LIMIT") ?? 90);
 const SIN_LIMITE_FECHAS = Deno.env.get("API_FOOTBALL_SIN_LIMITE_FECHAS") === "true";
@@ -37,6 +37,12 @@ interface PartidoBd {
 /** Día (hora de Madrid) de un instante, en formato YYYY-MM-DD. */
 export function diaMadrid(iso: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Madrid" }).format(new Date(iso));
+}
+
+/** Partido femenino en API-Football: por el nombre de los equipos o de la competición. */
+export function fixtureFemenino(fx: Fixture): boolean {
+  return esFemenino(fx.teams.home.name) || esFemenino(fx.teams.away.name) ||
+    /\b(women|woman|femenin[ao]|feminine|liga f)\b/i.test(fx.league?.name ?? "");
 }
 
 /** Días que permite consultar el plan gratuito: ayer, hoy y mañana. */
@@ -90,10 +96,13 @@ export async function enlazar(db: SupabaseClient, jornadaId: number): Promise<Re
       continue;
     }
     const inicio = p.inicio ? new Date(p.inicio).getTime() : null;
+    const femenino = esFemenino(p.local) || esFemenino(p.visitante);
     let mejor: Fixture | null = null;
     let mejorPuntos = 0;
     for (const fx of fixtures) {
       if (usados.has(fx.fixture.id)) continue;
+      // Liga F repite los nombres de los clubes: no se mezclan partidos femeninos y masculinos
+      if (fixtureFemenino(fx) !== femenino) continue;
       if (inicio != null && Math.abs(new Date(fx.fixture.date).getTime() - inicio) > TOLERANCIA_HORA_MS) continue;
       const a = parecido(p.local, fx.teams.home.name);
       const b = parecido(p.visitante, fx.teams.away.name);

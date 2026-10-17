@@ -121,17 +121,28 @@ const ALIAS: Record<string, string> = {
   "mexico": "mexico",
 };
 
+/**
+ * ¿Es un equipo femenino? En la quiniela llevan "(F)"; en API-Football suelen
+ * acabar en " W" o "Women".
+ */
+export function esFemenino(nombre: string): boolean {
+  return /\(f\)\s*$/i.test(nombre) || /\s(w|women|femenino)$/i.test(nombre.trim());
+}
+
+/** Nombre normalizado para comparar clubes, sin la marca de masculino/femenino. */
 export function normalizar(nombre: string): string {
-  return nombre
+  const tokens = nombre
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
+    .replace(/\((m|f)\)/g, " ")
     .replace(/[.'`´\-]/g, " ")
     .split(/\s+/)
     .filter(Boolean)
     .map((t) => ABREVIATURAS[t] ?? t)
-    .filter((t) => !RELLENO.has(t))
-    .join(" ");
+    .filter((t) => !RELLENO.has(t));
+  if (tokens.length > 1 && ["w", "women", "femenino"].includes(tokens[tokens.length - 1])) tokens.pop();
+  return tokens.join(" ");
 }
 
 export function canonico(nombre: string): string {

@@ -10,6 +10,7 @@ import { adminClient, usuarioDe } from "../_shared/supabase.ts";
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { temporadaApi } from "../_shared/apifootball.ts";
 import { diaMadrid, enlazar, type ResultadoEnlace } from "../_shared/enlazar.ts";
+import { corregirNombres } from "../_shared/nombres.ts";
 import { extraerJornadaJsonLd } from "../_shared/parsers.ts";
 
 const FUENTE_PROXIMA = "https://www.quinielafutbol.info/proximas-jornadas-de-la-quiniela.html";
@@ -66,12 +67,19 @@ async function importar(db: Db) {
     numero = (data?.[0]?.numero ?? 0) + 1;
   }
 
-  // 3. Alta (o, si ya existía, solo enlazar)
-  const { data: existente } = await db.from("jornadas").select("id")
+  // 3. Alta (o, si ya existía, corregir nombres y enlazar)
+  const { data: existente } = await db.from("jornadas").select("id, partidos(id, posicion, local, visitante)")
     .eq("temporada", temporada).eq("numero", numero).maybeSingle();
   if (existente) {
+    const fuente = new Map(jornada.partidos.map((p, i) => [i + 1, p]));
+    const corregidos = await corregirNombres(db, existente.partidos ?? [], fuente);
     const enlace = await enlazarSinFallar(db, existente.id);
-    return { jornada_id: existente.id, numero, ...enlace, aviso: [`La jornada ${numero} ya existía.`, enlace.aviso].filter(Boolean).join(" ") };
+    const avisos = [
+      `La jornada ${numero} ya existía.`,
+      corregidos ? `${corregidos} nombre(s) actualizados (p. ej. la marca (F) de Liga F).` : "",
+      enlace.aviso,
+    ];
+    return { jornada_id: existente.id, numero, ...enlace, aviso: avisos.filter(Boolean).join(" ") };
   }
 
   const { data: nueva, error } = await db.from("jornadas").insert({ temporada, numero, fecha }).select("id").single();
